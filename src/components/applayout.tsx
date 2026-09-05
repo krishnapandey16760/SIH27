@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import Sidebar from './Sidebar';
-import Topbar from './Topbar';
+import Sidebar from './sidebar';
+import Topbar from './topbar';
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+export default function applayout({ children }: { children: React.ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (

@@ -1,10 +1,10 @@
 import React from 'react';
-import AppLayout from '@/components/AppLayout';
-import MetricsBentoGrid from './components/MetricsBentoGrid';
-import GanttChartSection from './components/GanttChartSection';
-import OptimizationPanel from './components/OptimizationPanel';
-import ActivityFeed from './components/ActivityFeed';
-import DashboardHeader from './components/DashboardHeader';
+import AppLayout from '@/components/applayout';
+import MetricsBentoGrid from '../components/MetricsBentoGrid';
+import GanttChartSection from '../components/GanttChartSection';
+import OptimizationPanel from '../components/OptimizationPanel';
+import ActivityFeed from '../components/ActivityFeed';
+import DashboardHeader from '../components/DashboardHeader';
 
 // Backend integration: fetch today's block schedule, train movements, and optimization status from /api/block-planning/today
 export default function BlockPlanningDashboard() {

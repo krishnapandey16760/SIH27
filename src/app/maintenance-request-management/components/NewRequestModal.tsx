@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import Modal from '@/components/ui/Modal';
+import Modal from '@/components/ui/modal';
 import { Loader2 } from 'lucide-react';
 
 interface FormData {
