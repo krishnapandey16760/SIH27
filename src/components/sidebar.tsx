@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import AppLogo from '@/components/ui/AppLogo';
+import AppLogo from './ui/applogo';
 import { LayoutDashboard, ClipboardList, Network, ChevronLeft, ChevronRight, Settings, HelpCircle, Activity, Train, AlertTriangle,  } from 'lucide-react';
 
 interface NavItem {

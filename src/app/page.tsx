@@ -1,5 +1,5 @@
 import React from 'react';
-import AppLayout from '@/components/AppLayout';
+import AppLayout from '@/components/applayout';
 import MetricsBentoGrid from './components/MetricsBentoGrid';
 import GanttChartSection from './components/GanttChartSection';
 import OptimizationPanel from './components/OptimizationPanel';
