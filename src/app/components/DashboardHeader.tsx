@@ -1,25 +1,67 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Play, Download, Calendar, ChevronDown } from 'lucide-react';
+import { Play, Download, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
+import { useDashboard, TimeRange } from '@/context/DashboardContext';
+import { generateMetrics, generateGantt, exportMetricsCSV, exportGanttCSV } from '@/lib/dashboardData';
 
-const TIME_RANGES = ['Daily', 'Weekly', 'Monthly'] as const;
-type TimeRange = (typeof TIME_RANGES)[number];
+const TIME_RANGES: TimeRange[] = ['Daily', 'Weekly', 'Monthly'];
+
+function toInputDate(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDisplayDate(d: Date) {
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
 export default function DashboardHeader() {
-  const [timeRange, setTimeRange] = useState<TimeRange>('Daily');
+  const { selectedDate, setSelectedDate, timeRange, setTimeRange, now, seed, triggerRun } = useDashboard();
   const [running, setRunning] = useState(false);
+
+  const liveTime = now.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 
   const handleOptimize = () => {
     setRunning(true);
-    // Backend integration: POST /api/optimization/run { date: today, zone: 'NR' }
+    // Backend integration: POST /api/optimization/run { date: selectedDate, zone: 'NR', timeRange }
     setTimeout(() => {
       setRunning(false);
-      toast.success('Optimization run queued — MILP+GA solver starting', {
-        description: 'Est. completion: 2–4 minutes. Results will appear in the Gantt chart.',
+      triggerRun(); // regenerates metrics, gantt & optimization stats app-wide
+      toast.success('Optimization run complete — schedule updated', {
+        description: 'MILP+GA solver converged. Gantt chart and metrics refreshed.',
       });
     }, 1500);
+  };
+
+  const handleExport = () => {
+    const metrics = generateMetrics(seed, timeRange);
+    const gantt = generateGantt(seed, timeRange);
+    const csv =
+      `Block Planning Export - ${formatDisplayDate(selectedDate)} (${timeRange})\n\n` +
+      `== Metrics ==\n${exportMetricsCSV(metrics)}\n\n` +
+      `== Schedule ==\n${exportGanttCSV(gantt)}`;
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `block-schedule-${toInputDate(selectedDate)}-${timeRange.toLowerCase()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    toast.success('Schedule exported', { description: a.download });
   };
 
   return (
@@ -33,7 +75,7 @@ export default function DashboardHeader() {
           </span>
         </div>
         <p className="text-sm text-muted-foreground">
-          Northern Railways · 05 Sep 2026 · IST timezone · NR Division
+          Northern Railways · {formatDisplayDate(selectedDate)} · {liveTime} IST · NR Division
         </p>
       </div>
 
@@ -55,28 +97,31 @@ export default function DashboardHeader() {
           ))}
         </div>
 
-        {/* Date picker */}
-        <button className="btn-secondary text-sm gap-2">
+        {/* Date picker — transparent native input overlaid on styled label */}
+        <label className="btn-secondary text-sm gap-2 relative cursor-pointer select-none">
           <Calendar size={14} />
-          05 Sep 2026
-          <ChevronDown size={12} />
-        </button>
+          <span>{formatDisplayDate(selectedDate)}</span>
+          <input
+            type="date"
+            value={toInputDate(selectedDate)}
+            onChange={(e) => {
+              if (!e.target.value) return;
+              const [y, m, d] = e.target.value.split('-').map(Number);
+              setSelectedDate(new Date(y, m - 1, d));
+            }}
+            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+            style={{ colorScheme: 'dark' }}
+          />
+        </label>
 
         {/* Export */}
-        <button
-          className="btn-secondary text-sm"
-          onClick={() => toast.info('Exporting block schedule PDF…')}
-        >
+        <button className="btn-secondary text-sm" onClick={handleExport}>
           <Download size={14} />
           Export
         </button>
 
         {/* Run optimization */}
-        <button
-          className="btn-primary text-sm"
-          onClick={handleOptimize}
-          disabled={running}
-        >
+        <button className="btn-primary text-sm" onClick={handleOptimize} disabled={running}>
           {running ? (
             <>
               <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
