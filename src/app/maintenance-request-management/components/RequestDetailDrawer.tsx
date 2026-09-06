@@ -1,12 +1,13 @@
 'use client';
 
 import React from 'react';
-import { X, AlertTriangle, CheckCircle, Play, MapPin, Clock, User, Calendar, Activity,  } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle, Play, MapPin, Clock, User, Calendar, Activity } from 'lucide-react';
 import { toast } from 'sonner';
-import StatusBadge from '@/components/ui/StatusBadge';
-import PriorityBadge from '@/components/ui/PriorityBadge';
-import DeptBadge from '@/components/ui/DeptBadge';
+import StatusBadge from '@/components/ui/statusbadge';
+import PriorityBadge from '@/components/ui/prioritybadge';
+import DeptBadge from '@/components/ui/deptbadge';
 
+// ... baaki poora code same
 interface Request {
   id: string;
   requestId: string;
