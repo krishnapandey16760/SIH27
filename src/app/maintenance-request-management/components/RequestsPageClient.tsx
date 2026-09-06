@@ -1,13 +1,15 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, Download, Plus, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, CheckSquare, Square, CheckCircle, XCircle, Play, Eye, Edit3, AlertTriangle, ChevronLeft, ChevronRight,  } from 'lucide-react';
+import { Search, Download, Plus, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, CheckSquare, Square, CheckCircle, XCircle, Play, Eye, Edit3, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
-import StatusBadge from '@/components/ui/StatusBadge';
-import PriorityBadge from '@/components/ui/PriorityBadge';
-import DeptBadge from '@/components/ui/DeptBadge';
+import StatusBadge from '@/components/ui/statusbadge';
+import PriorityBadge from '@/components/ui/prioritybadge';
+import DeptBadge from '@/components/ui/deptbadge';
 import RequestDetailDrawer from './RequestDetailDrawer';
 import NewRequestModal from './NewRequestModal';
+
+// ... baaki poora code bilkul same rahega, sirf upar ke 3 import lines change hui hain
 
 // Backend integration: GET /api/maintenance-requests?zone=NR
 type Dept = 'Civil' | 'OHE' | 'S&T';
