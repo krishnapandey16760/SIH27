@@ -41,7 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     id: 'nav-trains',
     label: 'Train Movements',
-    href: '#',
+    href: '/train-movements',
     icon: <Train size={18} />,
     group: 'Visualization',
   },

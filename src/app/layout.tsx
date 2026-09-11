@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
 import { Geist } from 'next/font/google';
+//@ts-ignore
 import '../styles/tailwind.css';
 import { Toaster } from 'sonner';
 
