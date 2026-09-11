@@ -10,10 +10,10 @@ interface Station {
   id: string;
   code: string;
   name: string;
-  x: number; // percentage position on the REAL map image (from OCR pixel detection)
+  x: number; // percentage (0 - 100)
   y: number;
-  division: string; // 'Delhi' | 'Ambala' | 'Firozpur' | 'Lucknow' | 'Moradabad' | 'Unclassified'
-  verified: boolean; // true = manually confirmed major junction; false = auto-detected via OCR
+  division: string;
+  verified: boolean;
   activeBlocks?: number;
   scheduledTrains?: number;
 }
@@ -29,510 +29,407 @@ interface Edge {
   dept?: 'Civil' | 'OHE' | 'S&T';
 }
 
-// ---------------------------------------------------------------------------
-// STATION DATA SOURCE: Northern Railway System Map (corrected up to 31 Mar
-// 2026, NRHQE Plan No. HQ/25/06-2026), extracted via OCR (Tesseract) run on
-// the full-resolution map image, then regex-matched for "Name(CODE)" patterns.
-//
-// ~430 stations total:
-//   - 37 are VERIFIED major junctions (verified: true) — division, connecting
-//     edges, and positions manually cross-checked against zoomed map crops.
-//   - ~393 are AUTO-DETECTED wayside stations (verified: false) — code and
-//     approximate position came directly from OCR on the real image, so they
-//     ARE positioned correctly relative to the map, but:
-//       * some station NAMES have OCR misreads (small/stylized map text),
-//       * division is unknown for these (shown as 'Unclassified'),
-//       * NO connecting edges are drawn for these — detecting which thin
-//         colored line connects two stations is a computer-vision problem
-//         OCR text-extraction cannot solve; only verified junctions have
-//         hand-confirmed connections.
-//
-// If you find a wrong/garbled name, it is safe to manually correct just
-// that station's "name" field below — codes and positions are reliable.
-// ---------------------------------------------------------------------------
-
 const INITIAL_STATIONS: Station[] = [
-  { id: 'ABO', code: 'ABO', name: 'Kotwor Se Sthadqbohar Jn.', x: 2.54, y: 59.11, division: 'Unclassified', verified: false },
-  { id: 'ABP', code: 'ABP', name: 'Akbarpur Jn.', x: 3.92, y: 85.22, division: 'Unclassified', verified: false },
-  { id: 'ABS', code: 'ABS', name: 'Abohar Jn', x: 8.00, y: 27.00, division: 'Firozpur', verified: true },
-  { id: 'ACH', code: 'ACH', name: 'Ial Ganj', x: 4.95, y: 84.58, division: 'Unclassified', verified: false },
-  { id: 'ACND', code: 'ACND', name: 'Harya Narendra Dev Nagar', x: 4.88, y: 81.47, division: 'Unclassified', verified: false },
-  { id: 'AHH', code: 'AHH', name: 'Eda . . Ahmedgarh', x: 4.01, y: 40.50, division: 'Unclassified', verified: false },
-  { id: 'AHQ', code: 'AHQ', name: 'Ahera', x: 6.79, y: 91.99, division: 'Unclassified', verified: false },
-  { id: 'AIG', code: 'AIG', name: 'Aigawan', x: 5.62, y: 71.85, division: 'Unclassified', verified: false },
-  { id: 'AILM', code: 'AILM', name: 'Ailum', x: 5.92, y: 88.57, division: 'Unclassified', verified: false },
-  { id: 'AJL', code: 'AJL', name: 'Atwal', x: 18.86, y: 37.15, division: 'Unclassified', verified: false },
-  { id: 'ANDI', code: 'ANDI', name: 'Ing Nagar Delhi', x: 4.37, y: 73.83, division: 'Unclassified', verified: false },
-  { id: 'ANSB', code: 'ANSB', name: 'Sanandpur Sahib', x: 15.00, y: 34.12, division: 'Unclassified', verified: false },
-  { id: 'ANT', code: 'ANT', name: 'Anantnag', x: 27.49, y: 6.98, division: 'Unclassified', verified: false },
-  { id: 'ARP', code: 'ARP', name: 'Atrampur', x: 2.58, y: 93.86, division: 'Unclassified', verified: false },
-  { id: 'ASAR', code: 'ASAR', name: 'Asara', x: 3.22, y: 88.90, division: 'Unclassified', verified: false },
-  { id: 'ASR', code: 'ASR', name: 'Amritsar Jn', x: 8.00, y: 14.00, division: 'Firozpur', verified: true },
-  { id: 'AST', code: 'AST', name: 'Ehuanesar Wdfc Ne Asgoti', x: 5.71, y: 90.45, division: 'Unclassified', verified: false },
-  { id: 'ATMO', code: 'ATMO', name: 'Aithal', x: 4.03, y: 49.76, division: 'Unclassified', verified: false },
-  { id: 'AUR', code: 'AUR', name: 'Atrauli Road', x: 29.28, y: 67.86, division: 'Unclassified', verified: false },
-  { id: 'AWL', code: 'AWL', name: 'Cue Gi Alawalpur', x: 6.63, y: 93.52, division: 'Unclassified', verified: false },
-  { id: 'AY', code: 'AY', name: 'Ayodhya Dham', x: 10.53, y: 81.22, division: 'Unclassified', verified: false },
-  { id: 'AYC', code: 'AYC', name: 'Ayodhya Cantt', x: 84.00, y: 68.00, division: 'Lucknow', verified: true },
-  { id: 'BADK', code: 'BADK', name: 'Barka', x: 4.91, y: 90.74, division: 'Unclassified', verified: false },
-  { id: 'BAKK', code: 'BAKK', name: 'Akkcal', x: 25.91, y: 13.85, division: 'Unclassified', verified: false },
-  { id: 'BAOL', code: 'BAOL', name: 'Baoli', x: 36.15, y: 90.11, division: 'Unclassified', verified: false },
-  { id: 'BARL', code: 'BARL', name: 'Baral', x: 4.18, y: 64.27, division: 'Unclassified', verified: false },
-  { id: 'BARU', code: 'BARU', name: 'Bharatgarh', x: 11.18, y: 34.94, division: 'Unclassified', verified: false },
-  { id: 'BASN', code: 'BASN', name: 'Bhainswan', x: 5.24, y: 51.08, division: 'Unclassified', verified: false },
-  { id: 'BATH', code: 'BATH', name: 'Bolole Sugar Mil Siding', x: 24.12, y: 24.40, division: 'Unclassified', verified: false },
-  { id: 'BCN', code: 'BCN', name: 'Penal Capo Bachhrawan', x: 3.92, y: 85.22, division: 'Unclassified', verified: false },
-  { id: 'BCU', code: 'BCU', name: 'Otbhuchenu', x: 12.96, y: 42.27, division: 'Unclassified', verified: false },
-  { id: 'BDIN', code: 'BDIN', name: 'Bhodaiyan', x: 5.44, y: 87.19, division: 'Unclassified', verified: false },
-  { id: 'BDXT', code: 'BDXT', name: 'Badsa Basci Dhankot', x: 5.93, y: 87.93, division: 'Unclassified', verified: false },
-  { id: 'BE', code: 'BE', name: 'Bareilly Cantt Jn', x: 68.00, y: 38.00, division: 'Moradabad', verified: true },
-  { id: 'BEAS', code: 'BEAS', name: 'Beas', x: 14.00, y: 16.00, division: 'Firozpur', verified: true },
-  { id: 'BEG', code: 'BEG', name: 'Behtagokul', x: 4.17, y: 74.46, division: 'Unclassified', verified: false },
-  { id: 'BEK', code: 'BEK', name: 'Bundki', x: 5.03, y: 52.59, division: 'Unclassified', verified: false },
-  { id: 'BGH', code: 'BGH', name: 'Baghauli', x: 64.36, y: 77.48, division: 'Unclassified', verified: false },
-  { id: 'BGRR', code: 'BGRR', name: 'Bos Bagorpur', x: 4.67, y: 57.66, division: 'Unclassified', verified: false },
-  { id: 'BHDH', code: 'BHDH', name: 'Bohadurpur', x: 32.36, y: 69.30, division: 'Unclassified', verified: false },
-  { id: 'BHDR', code: 'BHDR', name: 'Bhadri', x: 6.33, y: 91.96, division: 'Unclassified', verified: false },
-  { id: 'BHKL', code: 'BHKL', name: 'Can Ase Bhokraul', x: 15.48, y: 65.60, division: 'Unclassified', verified: false },
-  { id: 'BHM', code: 'BHM', name: 'Bahram', x: 27.72, y: 78.41, division: 'Unclassified', verified: false },
-  { id: 'BHRL', code: 'BHRL', name: 'Bharoli Jn.', x: 24.86, y: 21.45, division: 'Unclassified', verified: false },
-  { id: 'BKNA', code: 'BKNA', name: 'Bokaina', x: 5.35, y: 57.76, division: 'Unclassified', verified: false },
-  { id: 'BLA', code: 'BLA', name: 'Bajalata', x: 19.12, y: 17.22, division: 'Unclassified', verified: false },
-  { id: 'BLDL', code: 'BLDL', name: 'Stp Balledapirlarath', x: 23.27, y: 20.17, division: 'Unclassified', verified: false },
-  { id: 'BLG', code: 'BLG', name: 'Darsh Ner Bilharghat', x: 4.86, y: 82.51, division: 'Unclassified', verified: false },
-  { id: 'BLM', code: 'BLM', name: 'Balamau Jn', x: 74.00, y: 56.00, division: 'Lucknow', verified: true },
-  { id: 'BLND', code: 'BLND', name: 'Bolina Doaba', x: 22.60, y: 32.62, division: 'Unclassified', verified: false },
-  { id: 'BLPU', code: 'BLPU', name: 'Btetiers Mn Bilpur', x: 34.75, y: 67.24, division: 'Unclassified', verified: false },
-  { id: 'BLZ', code: 'BLZ', name: 'Budhlada', x: 3.60, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'BMP', code: 'BMP', name: 'Hempur', x: 5.44, y: 72.25, division: 'Unclassified', verified: false },
-  { id: 'BNGL', code: 'BNGL', name: 'Suer Yee Wy Bhangala', x: 5.93, y: 87.93, division: 'Unclassified', verified: false },
-  { id: 'BNM', code: 'BNM', name: 'Vies Jaragaon', x: 4.88, y: 81.47, division: 'Unclassified', verified: false },
-  { id: 'BNQL', code: 'BNQL', name: 'Bhankla', x: 4.70, y: 84.17, division: 'Unclassified', verified: false },
-  { id: 'BOP', code: 'BOP', name: 'Bigtupur', x: 9.59, y: 86.30, division: 'Unclassified', verified: false },
-  { id: 'BPM', code: 'BPM', name: 'Baghpat Road', x: 3.09, y: 91.63, division: 'Unclassified', verified: false },
-  { id: 'BPRS', code: 'BPRS', name: 'Bhogpur Sirwal', x: 13.64, y: 92.67, division: 'Unclassified', verified: false },
-  { id: 'BRDV', code: 'BRDV', name: 'Beira Dev', x: 10.53, y: 81.22, division: 'Unclassified', verified: false },
-  { id: 'BRNI', code: 'BRNI', name: 'Baers Oe Barwasni', x: 5.03, y: 52.59, division: 'Unclassified', verified: false },
-  { id: 'BRSQ', code: 'BRSQ', name: 'Brar Square', x: 10.96, y: 83.23, division: 'Unclassified', verified: false },
-  { id: 'BSC', code: 'BSC', name: 'Land Shahr', x: 2.65, y: 64.43, division: 'Unclassified', verified: false },
-  { id: 'BSWA', code: 'BSWA', name: 'Boiswara', x: 5.44, y: 87.19, division: 'Unclassified', verified: false },
-  { id: 'BSY', code: 'BSY', name: 'Barsathi', x: 5.41, y: 59.00, division: 'Unclassified', verified: false },
-  { id: 'BTG', code: 'BTG', name: 'Bosharatgonj', x: 15.94, y: 66.28, division: 'Unclassified', verified: false },
-  { id: 'BTI', code: 'BTI', name: 'Bathinda Jn', x: 13.00, y: 27.00, division: 'Firozpur', verified: true },
-  { id: 'BTKD', code: 'BTKD', name: 'Bharatkund', x: 4.95, y: 84.58, division: 'Unclassified', verified: false },
-  { id: 'BTRA', code: 'BTRA', name: 'Bartara', x: 26.42, y: 69.97, division: 'Unclassified', verified: false },
-  { id: 'BTU', code: 'BTU', name: 'Boraut', x: 24.34, y: 90.31, division: 'Unclassified', verified: false },
-  { id: 'BUIN', code: 'BUIN', name: 'Butana', x: 5.34, y: 50.21, division: 'Unclassified', verified: false },
-  { id: 'BWI', code: 'BWI', name: 'Bilwai', x: 20.83, y: 87.54, division: 'Unclassified', verified: false },
-  { id: 'BWSN', code: 'BWSN', name: 'Bijwasan', x: 4.70, y: 84.17, division: 'Unclassified', verified: false },
-  { id: 'BXB', code: 'BXB', name: 'Banga', x: 4.04, y: 79.11, division: 'Unclassified', verified: false },
-  { id: 'BYHA', code: 'BYHA', name: 'Jaryaram', x: 2.83, y: 62.69, division: 'Unclassified', verified: false },
-  { id: 'BYQ', code: 'BYQ', name: 'Bahai', x: 7.09, y: 88.27, division: 'Unclassified', verified: false },
-  { id: 'BZ', code: 'BZ', name: 'Bhorur', x: 14.76, y: 45.28, division: 'Unclassified', verified: false },
-  { id: 'BZJT', code: 'BZJT', name: 'Bazi Jattan', x: 5.24, y: 51.08, division: 'Unclassified', verified: false },
-  { id: 'BZO', code: 'BZO', name: 'Moon Wo Barsola', x: 21.45, y: 54.14, division: 'Unclassified', verified: false },
-  { id: 'CBJ', code: 'CBJ', name: 'Clutter Buck Ganj', x: 4.18, y: 64.27, division: 'Unclassified', verified: false },
-  { id: 'CBX', code: 'CBX', name: 'Chandbhan', x: 14.88, y: 43.24, division: 'Unclassified', verified: false },
-  { id: 'CEU', code: 'CEU', name: 'Hiheru', x: 21.59, y: 33.18, division: 'Unclassified', verified: false },
-  { id: 'CGH', code: 'CGH', name: 'Holang', x: 6.33, y: 91.96, division: 'Unclassified', verified: false },
-  { id: 'CH', code: 'CH', name: 'Chandausi Jn', x: 63.00, y: 40.00, division: 'Moradabad', verified: true },
-  { id: 'CHBR', code: 'CHBR', name: 'Chaure Bozor', x: 14.44, y: 85.65, division: 'Unclassified', verified: false },
-  { id: 'CHMG', code: 'CHMG', name: 'Chintpurni Marg', x: 23.22, y: 28.66, division: 'Unclassified', verified: false },
-  { id: 'CIL', code: 'CIL', name: 'Chilbila Jn.', x: 36.15, y: 90.11, division: 'Unclassified', verified: false },
-  { id: 'CKA', code: 'CKA', name: 'Chok Paknencia', x: 12.24, y: 43.44, division: 'Unclassified', verified: false },
-  { id: 'CKDL', code: 'CKDL', name: 'Chak Dayala', x: 23.76, y: 18.87, division: 'Unclassified', verified: false },
-  { id: 'CLKN', code: 'CLKN', name: 'Chuchela Kalan', x: 5.37, y: 58.22, division: 'Unclassified', verified: false },
-  { id: 'CMMG', code: 'CMMG', name: 'Chamunda Marg', x: 22.20, y: 26.75, division: 'Unclassified', verified: false },
-  { id: 'CNJ', code: 'CNJ', name: 'Der Nagar', x: 5.07, y: 80.08, division: 'Unclassified', verified: false },
-  { id: 'CNKP', code: 'CNKP', name: 'Chanakyapuri', x: 4.95, y: 84.58, division: 'Unclassified', verified: false },
-  { id: 'CPYZ', code: 'CPYZ', name: 'Ive Chipyana Buzurg', x: 3.48, y: 76.73, division: 'Unclassified', verified: false },
-  { id: 'CWA', code: 'CWA', name: 'Churiwala', x: 3.38, y: 44.19, division: 'Unclassified', verified: false },
-  { id: 'DAN', code: 'DAN', name: 'Dhaneta', x: 2.61, y: 62.46, division: 'Unclassified', verified: false },
-  { id: 'DAVC', code: 'DAVC', name: 'Dav College Jalalabdf', x: 7.85, y: 40.10, division: 'Unclassified', verified: false },
-  { id: 'DAW', code: 'DAW', name: 'D.Av. College Jalandhar', x: 8.47, y: 89.30, division: 'Unclassified', verified: false },
-  { id: 'DBN', code: 'DBN', name: 'Dhablan', x: 13.99, y: 44.38, division: 'Unclassified', verified: false },
-  { id: 'DBNK', code: 'DBNK', name: 'Dagpekn Nanak', x: 9.14, y: 25.81, division: 'Unclassified', verified: false },
-  { id: 'DBSI', code: 'DBSI', name: 'Dayabasti', x: 10.07, y: 78.45, division: 'Unclassified', verified: false },
-  { id: 'DDY', code: 'DDY', name: 'Dudwindi', x: 2.64, y: 91.24, division: 'Unclassified', verified: false },
-  { id: 'DHRJ', code: 'DHRJ', name: 'Dhir Ganj', x: 13.64, y: 92.67, division: 'Unclassified', verified: false },
-  { id: 'DIB', code: 'DIB', name: 'Iboi', x: 5.85, y: 66.42, division: 'Unclassified', verified: false },
-  { id: 'DLI', code: 'DLI', name: 'Old Delhi (Delhi Jn)', x: 37.00, y: 42.00, division: 'Delhi', verified: true },
-  { id: 'DLPC', code: 'DLPC', name: 'Lee Se Yqoulatpur Chowk', x: 21.54, y: 28.20, division: 'Unclassified', verified: false },
-  { id: 'DLPR', code: 'DLPR', name: 'Dayalpur', x: 6.63, y: 93.52, division: 'Unclassified', verified: false },
-  { id: 'DLT', code: 'DLT', name: 'Delhi Jn.', x: 10.91, y: 61.72, division: 'Unclassified', verified: false },
-  { id: 'DMPR', code: 'DMPR', name: 'New Prithala Dharampur', x: 34.75, y: 67.24, division: 'Unclassified', verified: false },
-  { id: 'DN', code: 'DN', name: 'Dhanari', x: 29.94, y: 65.77, division: 'Unclassified', verified: false },
-  { id: 'DPP', code: 'DPP', name: 'Opp Un', x: 12.62, y: 45.99, division: 'Unclassified', verified: false },
-  { id: 'DSJ', code: 'DSJ', name: 'Delhi Safdarjang', x: 3.92, y: 85.22, division: 'Unclassified', verified: false },
-  { id: 'DTW', code: 'DTW', name: 'Datewas', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'DUN', code: 'DUN', name: 'Duganpur', x: 13.59, y: 61.19, division: 'Unclassified', verified: false },
-  { id: 'DWO', code: 'DWO', name: 'Dotwalo', x: 13.99, y: 44.38, division: 'Unclassified', verified: false },
-  { id: 'DXH', code: 'DXH', name: 'Duhai', x: 5.23, y: 72.77, division: 'Unclassified', verified: false },
-  { id: 'DYP', code: 'DYP', name: 'Mbpaoaryapur Jn.', x: 5.76, y: 88.11, division: 'Unclassified', verified: false },
-  { id: 'DZA', code: 'DZA', name: 'Asua', x: 6.00, y: 89.87, division: 'Unclassified', verified: false },
-  { id: 'ECR', code: 'ECR', name: 'Ddu', x: 6.34, y: 60.35, division: 'Unclassified', verified: false },
-  { id: 'EN', code: 'EN', name: 'Farokhnagar', x: 3.22, y: 88.90, division: 'Unclassified', verified: false },
-  { id: 'FAP', code: 'FAP', name: 'Fakhnorpur', x: 6.43, y: 92.83, division: 'Unclassified', verified: false },
-  { id: 'FDB', code: 'FDB', name: 'Faridabad', x: 7.09, y: 88.27, division: 'Unclassified', verified: false },
-  { id: 'FDK', code: 'FDK', name: 'Faridkot', x: 7.36, y: 40.03, division: 'Unclassified', verified: false },
-  { id: 'FDN', code: 'FDN', name: 'Goriseres New Town', x: 3.22, y: 88.90, division: 'Unclassified', verified: false },
-  { id: 'FKA', code: 'FKA', name: 'Fazilka Jn', x: 5.00, y: 26.00, division: 'Firozpur', verified: true },
-  { id: 'FRD', code: 'FRD', name: 'Farhedi', x: 11.24, y: 60.78, division: 'Unclassified', verified: false },
-  { id: 'FRH', code: 'FRH', name: 'Farhat Nagar', x: 65.61, y: 78.54, division: 'Unclassified', verified: false },
-  { id: 'FSR', code: 'FSR', name: 'Fagarsar', x: 12.62, y: 45.99, division: 'Unclassified', verified: false },
-  { id: 'FTH', code: 'FTH', name: 'Fotuhi', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'FZR', code: 'FZR', name: 'Firozpur Cantt Jn', x: 15.00, y: 15.00, division: 'Firozpur', verified: true },
-  { id: 'GANG', code: 'GANG', name: 'Gangaganj', x: 5.21, y: 86.22, division: 'Unclassified', verified: false },
-  { id: 'GANL', code: 'GANL', name: 'Gijanauli', x: 19.11, y: 35.37, division: 'Unclassified', verified: false },
-  { id: 'GDB', code: 'GDB', name: 'Giddar Baha', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'GDHA', code: 'GDHA', name: 'Godha', x: 29.36, y: 68.46, division: 'Unclassified', verified: false },
-  { id: 'GGB', code: 'GGB', name: 'Esses Garftnuntesar Br.', x: 6.34, y: 60.35, division: 'Unclassified', verified: false },
-  { id: 'GGKR', code: 'GGKR', name: 'Govindgarh Khokhar', x: 13.13, y: 46.91, division: 'Unclassified', verified: false },
-  { id: 'GGN', code: 'GGN', name: 'Gurgaon', x: 9.59, y: 86.30, division: 'Unclassified', verified: false },
-  { id: 'GHCL', code: 'GHCL', name: 'Chagwal', x: 23.36, y: 19.82, division: 'Unclassified', verified: false },
-  { id: 'GHH', code: 'GHH', name: 'Garhi Harsaru Jn', x: 33.00, y: 49.00, division: 'Delhi', verified: true },
-  { id: 'GJMB', code: 'GJMB', name: 'Ganj Muradabad', x: 5.14, y: 79.46, division: 'Unclassified', verified: false },
-  { id: 'GJUT', code: 'GJUT', name: 'Pee I', x: 14.32, y: 42.82, division: 'Unclassified', verified: false },
-  { id: 'GLH', code: 'GLH', name: 'Gulacthi', x: 3.34, y: 63.16, division: 'Unclassified', verified: false },
-  { id: 'GMS', code: 'GMS', name: 'Garhmuktesar', x: 11.24, y: 60.78, division: 'Unclassified', verified: false },
-  { id: 'GNBA', code: 'GNBA', name: 'Gaon Baroda', x: 15.73, y: 54.07, division: 'Unclassified', verified: false },
-  { id: 'GNG', code: 'GNG', name: 'Gouri Ganj', x: 13.49, y: 87.22, division: 'Unclassified', verified: false },
-  { id: 'GOD', code: 'GOD', name: 'Giddarpindi', x: 22.16, y: 34.72, division: 'Unclassified', verified: false },
-  { id: 'GRA', code: 'GRA', name: 'Ghofoundo', x: 5.50, y: 51.76, division: 'Unclassified', verified: false },
-  { id: 'GRN', code: 'GRN', name: 'Gurnay', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'GRY', code: 'GRY', name: 'Orya', x: 11.18, y: 34.94, division: 'Unclassified', verified: false },
-  { id: 'GSB', code: 'GSB', name: 'Garna Sahab', x: 5.71, y: 90.45, division: 'Unclassified', verified: false },
-  { id: 'GSR', code: 'GSR', name: 'Garh Shankar', x: 38.10, y: 77.90, division: 'Unclassified', verified: false },
-  { id: 'GUH', code: 'GUH', name: 'Guldhar', x: 4.43, y: 73.08, division: 'Unclassified', verified: false },
-  { id: 'GULR', code: 'GULR', name: 'Merneret Eae Guler', x: 25.30, y: 22.67, division: 'Unclassified', verified: false },
-  { id: 'GUNS', code: 'GUNS', name: 'Chunas', x: 13.99, y: 44.38, division: 'Unclassified', verified: false },
-  { id: 'GYL', code: 'GYL', name: 'Gharyala', x: 21.59, y: 33.18, division: 'Unclassified', verified: false },
-  { id: 'GZB', code: 'GZB', name: 'Ghaziabad Jn', x: 41.00, y: 44.00, division: 'Delhi', verified: true },
-  { id: 'HCP', code: 'HCP', name: 'Harchandpur', x: 14.44, y: 85.65, division: 'Unclassified', verified: false },
-  { id: 'HDWL', code: 'HDWL', name: 'Hardorawal', x: 22.32, y: 28.02, division: 'Unclassified', verified: false },
-  { id: 'HHP', code: 'HHP', name: 'Aer Tornar Fatehpur', x: 9.59, y: 86.30, division: 'Unclassified', verified: false },
-  { id: 'HPU', code: 'HPU', name: 'Hapur Jn', x: 46.00, y: 42.00, division: 'Delhi', verified: true },
-  { id: 'HRDR', code: 'HRDR', name: 'Harsar Dehri', x: 24.86, y: 21.45, division: 'Unclassified', verified: false },
-  { id: 'HRI', code: 'HRI', name: 'Hardoi', x: 3.95, y: 75.33, division: 'Unclassified', verified: false },
-  { id: 'HSW', code: 'HSW', name: 'Husainiwala', x: 19.26, y: 36.20, division: 'Unclassified', verified: false },
-  { id: 'HUK', code: 'HUK', name: 'Holambi Kalan', x: 5.59, y: 72.11, division: 'Unclassified', verified: false },
-  { id: 'HZR', code: 'HZR', name: 'Afizpur', x: 2.61, y: 62.46, division: 'Unclassified', verified: false },
-  { id: 'IDS', code: 'IDS', name: 'Iswardaspur', x: 75.33, y: 89.81, division: 'Unclassified', verified: false },
-  { id: 'IHP', code: 'IHP', name: 'Inchhapuri', x: 6.52, y: 92.45, division: 'Unclassified', verified: false },
-  { id: 'JAT', code: 'JAT', name: 'Jammu Tawi', x: 10.00, y: 2.00, division: 'Firozpur', verified: true },
-  { id: 'JCY', code: 'JCY', name: 'Jind City', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'JDHH', code: 'JDHH', name: 'Jandhera Semaspur', x: 4.88, y: 83.55, division: 'Unclassified', verified: false },
-  { id: 'JFG', code: 'JFG', name: 'Yafarganj', x: 5.10, y: 85.59, division: 'Unclassified', verified: false },
-  { id: 'JHWR', code: 'JHWR', name: 'Jhawar', x: 25.80, y: 23.22, division: 'Unclassified', verified: false },
-  { id: 'JMKR', code: 'JMKR', name: 'Jawalamukhi Road', x: 25.68, y: 23.86, division: 'Unclassified', verified: false },
-  { id: 'JNU', code: 'JNU', name: 'Barahi Devi Dham Jaunpur', x: 3.09, y: 91.63, division: 'Unclassified', verified: false },
-  { id: 'JPS', code: 'JPS', name: 'Jamalpur Shaikhan', x: 5.55, y: 50.63, division: 'Unclassified', verified: false },
-  { id: 'JRC', code: 'JRC', name: 'Jalandhar City', x: 22.00, y: 18.00, division: 'Firozpur', verified: true },
-  { id: 'JRJ', code: 'JRJ', name: 'Jargaon', x: 2.61, y: 62.46, division: 'Unclassified', verified: false },
-  { id: 'JSKA', code: 'JSKA', name: 'Jataula Jauri Sampka', x: 2.64, y: 91.24, division: 'Unclassified', verified: false },
-  { id: 'JUC', code: 'JUC', name: 'Jalandhar Cantt Jn', x: 20.00, y: 17.00, division: 'Firozpur', verified: true },
-  { id: 'JWRA', code: 'JWRA', name: 'Jandwala Kharta', x: 14.32, y: 42.82, division: 'Unclassified', verified: false },
-  { id: 'KART', code: 'KART', name: 'Kiralkur Sahib', x: 19.74, y: 34.60, division: 'Unclassified', verified: false },
-  { id: 'KASH', code: 'KASH', name: 'Kultham Abdullah Shah', x: 26.17, y: 77.90, division: 'Unclassified', verified: false },
-  { id: 'KBE', code: 'KBE', name: 'Kurebhar', x: 5.27, y: 86.59, division: 'Unclassified', verified: false },
-  { id: 'KCZ', code: 'KCZ', name: 'Kairon', x: 23.09, y: 32.29, division: 'Unclassified', verified: false },
-  { id: 'KDF', code: 'KDF', name: 'Khundaur', x: 7.06, y: 89.13, division: 'Unclassified', verified: false },
-  { id: 'KEMK', code: 'KEMK', name: 'Khem Karan', x: 15.00, y: 34.12, division: 'Unclassified', verified: false },
-  { id: 'KEX', code: 'KEX', name: 'Khekra', x: 6.52, y: 92.45, division: 'Unclassified', verified: false },
-  { id: 'KGB', code: 'KGB', name: 'Katghar Jn', x: 70.00, y: 36.00, division: 'Moradabad', verified: true },
-  { id: 'KGKD', code: 'KGKD', name: 'Kang Khurd', x: 13.64, y: 92.67, division: 'Unclassified', verified: false },
-  { id: 'KH', code: 'KH', name: 'Kahilia', x: 5.73, y: 71.04, division: 'Unclassified', verified: false },
-  { id: 'KHDR', code: 'KHDR', name: 'Khandrai', x: 5.55, y: 50.63, division: 'Unclassified', verified: false },
-  { id: 'KHKN', code: 'KHKN', name: 'Khera Kalan', x: 5.38, y: 72.54, division: 'Unclassified', verified: false },
-  { id: 'KHNM', code: 'KHNM', name: 'Kunda Harnam Ganj', x: 3.27, y: 91.59, division: 'Unclassified', verified: false },
-  { id: 'KIP', code: 'KIP', name: 'Holilpur', x: 6.43, y: 92.83, division: 'Unclassified', verified: false },
-  { id: 'KJY', code: 'KJY', name: 'Khurja City', x: 8.79, y: 65.10, division: 'Unclassified', verified: false },
-  { id: 'KK', code: 'KK', name: 'Kalan', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'KKP', code: 'KKP', name: 'Kotkapura Jn', x: 11.00, y: 23.00, division: 'Firozpur', verified: true },
-  { id: 'KKRL', code: 'KKRL', name: 'Kakrala', x: 13.71, y: 45.25, division: 'Unclassified', verified: false },
-  { id: 'KLWL', code: 'KLWL', name: 'Ailonwati Punjob', x: 12.62, y: 45.99, division: 'Unclassified', verified: false },
-  { id: 'KNDI', code: 'KNDI', name: 'Kandrori', x: 5.27, y: 86.59, division: 'Unclassified', verified: false },
-  { id: 'KNT', code: 'KNT', name: 'Kanth', x: 5.36, y: 56.72, division: 'Unclassified', verified: false },
-  { id: 'KPKI', code: 'KPKI', name: 'Qasimpur Kheri', x: 6.00, y: 89.87, division: 'Unclassified', verified: false },
-  { id: 'KPLR', code: 'KPLR', name: 'Kopar Lahar', x: 25.78, y: 24.11, division: 'Unclassified', verified: false },
-  { id: 'KRKH', code: 'KRKH', name: 'Nen Harkhara', x: 5.37, y: 58.22, division: 'Unclassified', verified: false },
-  { id: 'KRSV', code: 'KRSV', name: 'Kohor Singh Wala', x: 17.32, y: 38.63, division: 'Unclassified', verified: false },
-  { id: 'KRTN', code: 'KRTN', name: 'Kirti Nagar', x: 5.14, y: 79.46, division: 'Unclassified', verified: false },
-  { id: 'KS', code: 'KS', name: 'Uktoor', x: 15.54, y: 41.41, division: 'Unclassified', verified: false },
-  { id: 'KTHU', code: 'KTHU', name: 'Kothua', x: 23.36, y: 19.82, division: 'Unclassified', verified: false },
-  { id: 'KTW', code: 'KTW', name: 'Kotdwara', x: 5.55, y: 50.63, division: 'Unclassified', verified: false },
-  { id: 'KUF', code: 'KUF', name: 'Kaurha', x: 3.99, y: 74.89, division: 'Unclassified', verified: false },
-  { id: 'KUP', code: 'KUP', name: 'Kup', x: 15.54, y: 41.41, division: 'Unclassified', verified: false },
-  { id: 'KUPR', code: 'KUPR', name: 'Khurdpur', x: 23.09, y: 32.29, division: 'Unclassified', verified: false },
-  { id: 'KURQ', code: 'KURQ', name: 'Khui Khera', x: 14.88, y: 43.24, division: 'Unclassified', verified: false },
-  { id: 'KVG', code: 'KVG', name: 'Kundanganj', x: 3.94, y: 85.36, division: 'Unclassified', verified: false },
-  { id: 'KZI', code: 'KZI', name: 'Chandraoli', x: 5.76, y: 88.11, division: 'Unclassified', verified: false },
-  { id: 'LBA', code: 'LBA', name: 'Lambhua', x: 20.83, y: 87.54, division: 'Unclassified', verified: false },
-  { id: 'LDCY', code: 'LDCY', name: 'Lodhi Colony', x: 5.27, y: 86.59, division: 'Unclassified', verified: false },
-  { id: 'LDH', code: 'LDH', name: 'Ludhiana Jn', x: 26.00, y: 17.00, division: 'Ambala', verified: true },
-  { id: 'LHA', code: 'LHA', name: 'Lehragaga', x: 12.79, y: 47.31, division: 'Unclassified', verified: false },
-  { id: 'LKK', code: 'LKK', name: 'Lpur Khalsa College', x: 2.83, y: 91.05, division: 'Unclassified', verified: false },
-  { id: 'LKO', code: 'LKO', name: 'Lucknow Charbagh', x: 75.00, y: 65.00, division: 'Lucknow', verified: true },
-  { id: 'LMN', code: 'LMN', name: 'Lachhmanpur', x: 5.92, y: 88.57, division: 'Unclassified', verified: false },
-  { id: 'LNK', code: 'LNK', name: 'Oman Khas Jn.', x: 15.00, y: 34.12, division: 'Unclassified', verified: false },
-  { id: 'LNS', code: 'LNS', name: 'Lunsu', x: 25.80, y: 23.22, division: 'Unclassified', verified: false },
-  { id: 'LTKR', code: 'LTKR', name: 'Lalit Khera', x: 3.93, y: 49.44, division: 'Unclassified', verified: false },
-  { id: 'MAHO', code: 'MAHO', name: 'Sps Maholi', x: 5.59, y: 72.11, division: 'Unclassified', verified: false },
-  { id: 'MB', code: 'MB', name: 'Moradabad Jn', x: 60.00, y: 45.00, division: 'Moradabad', verified: true },
-  { id: 'MBDP', code: 'MBDP', name: 'Elha Devi Dham Partapgarh', x: 2.83, y: 91.05, division: 'Unclassified', verified: false },
-  { id: 'MCDA', code: 'MCDA', name: 'Chandrika Devi Dham Antu', x: 74.16, y: 90.05, division: 'Unclassified', verified: false },
-  { id: 'MCTM', code: 'MCTM', name: 'Tyr Captain Tushar Mahojan', x: 18.52, y: 15.56, division: 'Unclassified', verified: false },
-  { id: 'MDNR', code: 'MDNR', name: 'Amodi Nagar', x: 5.62, y: 71.85, division: 'Unclassified', verified: false },
-  { id: 'MEQ', code: 'MEQ', name: 'Malethukanak', x: 3.92, y: 85.22, division: 'Unclassified', verified: false },
-  { id: 'MEX', code: 'MEX', name: 'Mukerian', x: 5.92, y: 88.57, division: 'Unclassified', verified: false },
-  { id: 'MFB', code: 'MFB', name: 'Mustafabad', x: 13.99, y: 44.38, division: 'Unclassified', verified: false },
-  { id: 'MFM', code: 'MFM', name: 'Alam', x: 18.86, y: 37.15, division: 'Unclassified', verified: false },
-  { id: 'MGRP', code: 'MGRP', name: 'Ptk Meghrajpura', x: 26.43, y: 21.73, division: 'Unclassified', verified: false },
-  { id: 'MIL', code: 'MIL', name: 'Ioi', x: 13.51, y: 61.59, division: 'Unclassified', verified: false },
-  { id: 'MINJ', code: 'MINJ', name: 'Maikal Ganj', x: 5.81, y: 71.18, division: 'Unclassified', verified: false },
-  { id: 'MJHL', code: 'MJHL', name: 'Majhaula', x: 3.89, y: 64.41, division: 'Unclassified', verified: false },
-  { id: 'MJTA', code: 'MJTA', name: 'Majitha', x: 23.22, y: 28.66, division: 'Unclassified', verified: false },
-  { id: 'MKMN', code: 'MKMN', name: 'Madina', x: 5.35, y: 58.59, division: 'Unclassified', verified: false },
-  { id: 'MLPR', code: 'MLPR', name: 'Molipur', x: 5.21, y: 86.22, division: 'Unclassified', verified: false },
-  { id: 'MNDR', code: 'MNDR', name: 'Mandi Dhanaura', x: 5.35, y: 58.59, division: 'Unclassified', verified: false },
-  { id: 'MNKN', code: 'MNKN', name: 'Manikala', x: 36.55, y: 90.20, division: 'Unclassified', verified: false },
-  { id: 'MNUR', code: 'MNUR', name: 'Manjhlepur', x: 7.06, y: 89.13, division: 'Unclassified', verified: false },
-  { id: 'MNVL', code: 'MNVL', name: 'Monwal', x: 18.44, y: 17.09, division: 'Unclassified', verified: false },
-  { id: 'MOF', code: 'MOF', name: 'Mondh', x: 3.22, y: 63.53, division: 'Unclassified', verified: false },
-  { id: 'MOHR', code: 'MOHR', name: 'Mohana Haryana', x: 9.09, y: 53.10, division: 'Unclassified', verified: false },
-  { id: 'MOPR', code: 'MOPR', name: 'Mohanpura', x: 13.13, y: 46.91, division: 'Unclassified', verified: false },
-  { id: 'MOTC', code: 'MOTC', name: 'Bss I Wiotichur', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'MSBI', code: 'MSBI', name: 'Block Hut', x: 27.97, y: 56.06, division: 'Unclassified', verified: false },
-  { id: 'MSOD', code: 'MSOD', name: 'Masodha', x: 8.62, y: 84.17, division: 'Unclassified', verified: false },
-  { id: 'MST', code: 'MST', name: 'Masit', x: 3.48, y: 76.73, division: 'Unclassified', verified: false },
-  { id: 'MSZ', code: 'MSZ', name: 'Wansa', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'MTPR', code: 'MTPR', name: 'Raimehatpur', x: 17.13, y: 31.75, division: 'Unclassified', verified: false },
-  { id: 'MUD', code: 'MUD', name: 'Murad Nagar', x: 5.44, y: 72.25, division: 'Unclassified', verified: false },
-  { id: 'MUT', code: 'MUT', name: 'Fmeerut Cantt.', x: 13.30, y: 70.13, division: 'Unclassified', verified: false },
-  { id: 'MUZ', code: 'MUZ', name: 'Muhiuddinpur', x: 5.68, y: 71.31, division: 'Unclassified', verified: false },
-  { id: 'MWC', code: 'MWC', name: 'Hander Vihar', x: 4.88, y: 81.47, division: 'Unclassified', verified: false },
-  { id: 'MWX', code: 'MWX', name: 'Onwalakhas', x: 19.26, y: 36.20, division: 'Unclassified', verified: false },
-  { id: 'MXH', code: 'MXH', name: 'Makhu', x: 19.11, y: 35.37, division: 'Unclassified', verified: false },
-  { id: 'MXP', code: 'MXP', name: 'Malupota', x: 4.00, y: 78.74, division: 'Unclassified', verified: false },
-  { id: 'MZN', code: 'MZN', name: 'Muzaffarnagar Narain Jn', x: 40.00, y: 31.00, division: 'Ambala', verified: true },
-  { id: 'NAS', code: 'NAS', name: 'Png Rola', x: 17.66, y: 31.01, division: 'Unclassified', verified: false },
-  { id: 'NBD', code: 'NBD', name: 'Najibabad Jn', x: 47.00, y: 21.00, division: 'Moradabad', verified: true },
-  { id: 'NCR', code: 'NCR', name: 'Bspr Ddu', x: 2.54, y: 63.63, division: 'Unclassified', verified: false },
-  { id: 'NDAM', code: 'NDAM', name: 'Nadigam', x: 22.95, y: 4.55, division: 'Unclassified', verified: false },
-  { id: 'NDLS', code: 'NDLS', name: 'New Delhi', x: 35.00, y: 45.00, division: 'Delhi', verified: true },
-  { id: 'NER', code: 'NER', name: 'Ljn', x: 3.89, y: 64.41, division: 'Unclassified', verified: false },
-  { id: 'NERI', code: 'NERI', name: 'Neri', x: 5.68, y: 71.31, division: 'Unclassified', verified: false },
-  { id: 'NG', code: 'NG', name: 'Main Line', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'NGRS', code: 'NGRS', name: 'Nagrota Suriyan', x: 27.05, y: 22.07, division: 'Unclassified', verified: false },
-  { id: 'NHF', code: 'NHF', name: 'Nihostha', x: 5.93, y: 87.93, division: 'Unclassified', verified: false },
-  { id: 'NKD', code: 'NKD', name: 'Nakodar Jn', x: 18.00, y: 20.00, division: 'Firozpur', verified: true },
-  { id: 'NLH', code: 'NLH', name: 'Jatha', x: 3.93, y: 49.44, division: 'Unclassified', verified: false },
-  { id: 'NMDA', code: 'NMDA', name: 'New Morinda', x: 19.07, y: 37.64, division: 'Unclassified', verified: false },
-  { id: 'NNGL', code: 'NNGL', name: 'Nangal', x: 22.60, y: 32.62, division: 'Unclassified', verified: false },
-  { id: 'NRVR', code: 'NRVR', name: 'Naraing Vihar', x: 4.93, y: 81.09, division: 'Unclassified', verified: false },
-  { id: 'NTG', code: 'NTG', name: 'Nusaratabad Kharkhari', x: 6.63, y: 93.52, division: 'Unclassified', verified: false },
-  { id: 'NUPR', code: 'NUPR', name: 'Nurpur Road', x: 23.36, y: 19.82, division: 'Unclassified', verified: false },
-  { id: 'OHT', code: 'OHT', name: 'Rnoronot', x: 2.54, y: 63.63, division: 'Unclassified', verified: false },
-  { id: 'PBUM', code: 'PBUM', name: 'Pabnowa Jasmahinder', x: 12.79, y: 47.31, division: 'Unclassified', verified: false },
-  { id: 'PGW', code: 'PGW', name: 'Phagwara Jn.', x: 3.39, y: 77.26, division: 'Unclassified', verified: false },
-  { id: 'PHA', code: 'PHA', name: 'Pathak Pur', x: 8.79, y: 65.10, division: 'Unclassified', verified: false },
-  { id: 'PHR', code: 'PHR', name: 'Phillaur Jn', x: 24.00, y: 19.00, division: 'Firozpur', verified: true },
-  { id: 'PHRH', code: 'PHRH', name: 'Patti Ee A Panchrukhi', x: 9.14, y: 25.81, division: 'Unclassified', verified: false },
-  { id: 'PHV', code: 'PHV', name: 'Pirthi Ganj', x: 2.64, y: 91.24, division: 'Unclassified', verified: false },
-  { id: 'PHWR', code: 'PHWR', name: 'Renone Road', x: 3.60, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'PIMX', code: 'PIMX', name: 'Palamipur Himeehel', x: 23.83, y: 25.72, division: 'Unclassified', verified: false },
-  { id: 'PJGM', code: 'PJGM', name: 'Panzgam', x: 27.31, y: 5.74, division: 'Unclassified', verified: false },
-  { id: 'PKA', code: 'PKA', name: 'Fazilka Jn.', x: 12.97, y: 41.97, division: 'Unclassified', verified: false },
-  { id: 'PKY', code: 'PKY', name: 'Pilkhani', x: 13.13, y: 46.91, division: 'Unclassified', verified: false },
-  { id: 'PLP', code: 'PLP', name: 'Sate Ae A Phulpur', x: 10.91, y: 61.72, division: 'Unclassified', verified: false },
-  { id: 'PLT', code: 'PLT', name: 'Pirthala Lalauda', x: 5.24, y: 51.08, division: 'Unclassified', verified: false },
-  { id: 'PM', code: 'PM', name: 'Palam', x: 4.87, y: 83.08, division: 'Unclassified', verified: false },
-  { id: 'PMPE', code: 'PMPE', name: 'Pampore', x: 24.50, y: 3.98, division: 'Unclassified', verified: false },
-  { id: 'PMR', code: 'PMR', name: 'Pitamberpur', x: 15.94, y: 66.28, division: 'Unclassified', verified: false },
-  { id: 'PNI', code: 'PNI', name: 'Puraini', x: 15.73, y: 54.07, division: 'Unclassified', verified: false },
-  { id: 'PNP', code: 'PNP', name: 'Panipat Jn.', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'PPB', code: 'PPB', name: 'Ety Ny Nee Partappura', x: 2.58, y: 93.86, division: 'Unclassified', verified: false },
-  { id: 'PPDE', code: 'PPDE', name: 'Pandu Pindara Jn.', x: 3.50, y: 48.13, division: 'Unclassified', verified: false },
-  { id: 'PPU', code: 'PPU', name: 'Piparpur', x: 5.92, y: 88.57, division: 'Unclassified', verified: false },
-  { id: 'PQN', code: 'PQN', name: 'Pariawon Kala Kankar Road', x: 2.83, y: 91.05, division: 'Unclassified', verified: false },
-  { id: 'PQY', code: 'PQY', name: 'Pabli Khas', x: 26.42, y: 69.97, division: 'Unclassified', verified: false },
-  { id: 'PRAR', code: 'PRAR', name: 'Oror', x: 24.37, y: 25.35, division: 'Unclassified', verified: false },
-  { id: 'PRF', code: 'PRF', name: 'Parsipur', x: 2.61, y: 62.46, division: 'Unclassified', verified: false },
-  { id: 'PRI', code: 'PRI', name: 'Cys Pathri', x: 3.93, y: 49.44, division: 'Unclassified', verified: false },
-  { id: 'PRKE', code: 'PRKE', name: 'Purwa Khera', x: 15.94, y: 66.28, division: 'Unclassified', verified: false },
-  { id: 'PRPM', code: 'PRPM', name: 'Pandit Ramprasad Bismil', x: 14.46, y: 70.70, division: 'Unclassified', verified: false },
-  { id: 'PRTP', code: 'PRTP', name: 'Partapur', x: 5.81, y: 71.18, division: 'Unclassified', verified: false },
-  { id: 'PT', code: 'PT', name: 'Patli', x: 5.69, y: 90.29, division: 'Unclassified', verified: false },
-  { id: 'PTA', code: 'PTA', name: 'Patigla', x: 14.88, y: 43.24, division: 'Unclassified', verified: false },
-  { id: 'PTE', code: 'PTE', name: 'Patiala Cantt.', x: 3.38, y: 44.19, division: 'Unclassified', verified: false },
-  { id: 'PTK', code: 'PTK', name: 'Pathankot Jn', x: 14.00, y: 8.00, division: 'Firozpur', verified: true },
-  { id: 'PTKC', code: 'PTKC', name: 'Pathankot Cantt.', x: 5.21, y: 86.22, division: 'Unclassified', verified: false },
-  { id: 'PTNR', code: 'PTNR', name: 'Patel Nagar', x: 4.00, y: 78.74, division: 'Unclassified', verified: false },
-  { id: 'PTRD', code: 'PTRD', name: 'Pataudi Road', x: 6.79, y: 91.99, division: 'Unclassified', verified: false },
-  { id: 'PTTN', code: 'PTTN', name: 'Pattan', x: 22.43, y: 3.52, division: 'Unclassified', verified: false },
-  { id: 'PTYR', code: 'PTYR', name: 'Potiyara', x: 4.87, y: 83.08, division: 'Unclassified', verified: false },
-  { id: 'PUK', code: 'PUK', name: 'Nikosi', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'PWL', code: 'PWL', name: 'Dhulawat Da Palwal', x: 3.27, y: 91.59, division: 'Unclassified', verified: false },
-  { id: 'QRP', code: 'QRP', name: 'Kila Roipur', x: 7.85, y: 40.10, division: 'Unclassified', verified: false },
-  { id: 'QSR', code: 'QSR', name: 'Kansrao', x: 14.76, y: 45.28, division: 'Unclassified', verified: false },
-  { id: 'QTP', code: 'QTP', name: 'Rutobpur', x: 5.34, y: 50.21, division: 'Unclassified', verified: false },
-  { id: 'RBHR', code: 'RBHR', name: 'Rabhra', x: 5.24, y: 51.08, division: 'Unclassified', verified: false },
-  { id: 'RBL', code: 'RBL', name: 'Raebareli Jn', x: 78.00, y: 70.00, division: 'Lucknow', verified: true },
-  { id: 'RCP', code: 'RCP', name: 'Wes Oy Au Romchandrapur', x: 3.22, y: 88.90, division: 'Unclassified', verified: false },
-  { id: 'RCR', code: 'RCR', name: 'Rattar Chattar', x: 22.20, y: 26.75, division: 'Unclassified', verified: false },
-  { id: 'RDL', code: 'RDL', name: 'Rudauli', x: 21.42, y: 80.58, division: 'Unclassified', verified: false },
-  { id: 'RDS', code: 'RDS', name: 'Ramdas', x: 23.32, y: 27.35, division: 'Unclassified', verified: false },
-  { id: 'RES', code: 'RES', name: 'Rasauli', x: 4.00, y: 78.74, division: 'Unclassified', verified: false },
-  { id: 'RHU', code: 'RHU', name: 'Orahon', x: 4.04, y: 79.11, division: 'Unclassified', verified: false },
-  { id: 'RJK', code: 'RJK', name: 'Raja Ka Sahaspur Jn', x: 58.00, y: 38.00, division: 'Moradabad', verified: true },
-  { id: 'RKX', code: 'RKX', name: 'Rukhi', x: 5.69, y: 51.29, division: 'Unclassified', verified: false },
-  { id: 'RMC', code: 'RMC', name: 'Ramehaura Road', x: 6.63, y: 93.52, division: 'Unclassified', verified: false },
-  { id: 'RMGJ', code: 'RMGJ', name: 'Ramganj', x: 3.22, y: 88.90, division: 'Unclassified', verified: false },
-  { id: 'RMJK', code: 'RMJK', name: 'Ramnagar Road', x: 20.27, y: 16.57, division: 'Unclassified', verified: false },
-  { id: 'RMU', code: 'RMU', name: 'Rampur Jn.', x: 5.21, y: 59.95, division: 'Unclassified', verified: false },
-  { id: 'ROZA', code: 'ROZA', name: 'Boza Jn', x: 74.00, y: 46.00, division: 'Moradabad', verified: true },
-  { id: 'RPAP', code: 'RPAP', name: 'Fotnipora', x: 14.63, y: 4.86, division: 'Unclassified', verified: false },
-  { id: 'RPAR', code: 'RPAR', name: 'Rupnagar', x: 19.26, y: 36.20, division: 'Unclassified', verified: false },
-  { id: 'RPMN', code: 'RPMN', name: 'Rampur Manyharan', x: 4.70, y: 84.17, division: 'Unclassified', verified: false },
-  { id: 'RRAL', code: 'RRAL', name: 'Rure Asal', x: 17.13, y: 31.75, division: 'Unclassified', verified: false },
-  { id: 'RRS', code: 'RRS', name: 'Raghuraj Singh', x: 13.49, y: 87.22, division: 'Unclassified', verified: false },
-  { id: 'RRW', code: 'RRW', name: 'Oranwala', x: 14.88, y: 43.24, division: 'Unclassified', verified: false },
-  { id: 'RWL', code: 'RWL', name: 'Raiwala Jn', x: 49.00, y: 14.00, division: 'Moradabad', verified: true },
-  { id: 'RYS', code: 'RYS', name: 'Nsu Son Rasuiya', x: 15.48, y: 65.60, division: 'Unclassified', verified: false },
-  { id: 'SAG', code: 'SAG', name: 'Sangrur', x: 13.99, y: 44.38, division: 'Unclassified', verified: false },
-  { id: 'SAGR', code: 'SAGR', name: 'Wee Shrirajnagar', x: 4.70, y: 84.17, division: 'Unclassified', verified: false },
-  { id: 'SAR', code: 'SAR', name: 'Shahzad Nagar', x: 6.34, y: 60.35, division: 'Unclassified', verified: false },
-  { id: 'SAW', code: 'SAW', name: 'Suriowon', x: 2.54, y: 63.63, division: 'Unclassified', verified: false },
-  { id: 'SBB', code: 'SBB', name: 'Babad', x: 26.04, y: 77.70, division: 'Unclassified', verified: false },
-  { id: 'SBTJ', code: 'SBTJ', name: 'Shanidev Dham Bishnathganj', x: 6.33, y: 91.96, division: 'Unclassified', verified: false },
-  { id: 'SCQ', code: 'SCQ', name: 'Sham Chaurasi', x: 17.13, y: 31.75, division: 'Unclassified', verified: false },
-  { id: 'SDHP', code: 'SDHP', name: 'Suchpur', x: 7.06, y: 89.13, division: 'Unclassified', verified: false },
-  { id: 'SDUA', code: 'SDUA', name: 'Sadura', x: 20.18, y: 7.67, division: 'Unclassified', verified: false },
-  { id: 'SEQ', code: 'SEQ', name: 'Sekna', x: 12.24, y: 43.44, division: 'Unclassified', verified: false },
-  { id: 'SFA', code: 'SFA', name: 'Sunhera', x: 6.33, y: 91.96, division: 'Unclassified', verified: false },
-  { id: 'SFPR', code: 'SFPR', name: 'Uttar Prad Esh Sdfipur', x: 4.88, y: 81.47, division: 'Unclassified', verified: false },
-  { id: 'SGJ', code: 'SGJ', name: 'Safdarganj', x: 4.04, y: 79.11, division: 'Unclassified', verified: false },
-  { id: 'SGRR', code: 'SGRR', name: 'Songor', x: 20.27, y: 16.57, division: 'Unclassified', verified: false },
-  { id: 'SHG', code: 'SHG', name: 'Shahganj Jn.', x: 7.09, y: 88.27, division: 'Unclassified', verified: false },
-  { id: 'SHOM', code: 'SHOM', name: 'Snfbos Nosed', x: 12.62, y: 45.99, division: 'Unclassified', verified: false },
-  { id: 'SHRM', code: 'SHRM', name: 'Koa Sharma', x: 4.43, y: 73.08, division: 'Unclassified', verified: false },
-  { id: 'SHTS', code: 'SHTS', name: 'Sambhal Hatim Sarai', x: 2.83, y: 62.69, division: 'Unclassified', verified: false },
-  { id: 'SIR', code: 'SIR', name: 'Sirhind Jn', x: 28.00, y: 18.00, division: 'Ambala', verified: true },
-  { id: 'SLHP', code: 'SLHP', name: 'Himachal Pradesh', x: 23.83, y: 25.72, division: 'Unclassified', verified: false },
-  { id: 'SLN', code: 'SLN', name: 'Sultanpur Jn', x: 87.00, y: 65.00, division: 'Lucknow', verified: true },
-  { id: 'SLRP', code: 'SLRP', name: 'Solorpur', x: 4.87, y: 83.08, division: 'Unclassified', verified: false },
-  { id: 'SLWR', code: 'SLWR', name: 'Silawar', x: 5.44, y: 87.19, division: 'Unclassified', verified: false },
-  { id: 'SMBR', code: 'SMBR', name: 'Sumber', x: 27.77, y: 10.70, division: 'Unclassified', verified: false },
-  { id: 'SMDP', code: 'SMDP', name: 'Shohabad Mohammadpur', x: 4.88, y: 83.55, division: 'Unclassified', verified: false },
-  { id: 'SMQL', code: 'SMQL', name: 'Shomli', x: 13.49, y: 87.22, division: 'Unclassified', verified: false },
-  { id: 'SNAP', code: 'SNAP', name: 'Fyesona Arjunpur', x: 3.92, y: 85.22, division: 'Unclassified', verified: false },
-  { id: 'SNB', code: 'SNB', name: 'Satnaur Badesron', x: 37.96, y: 77.57, division: 'Unclassified', verified: false },
-  { id: 'SNX', code: 'SNX', name: 'Road', x: 5.69, y: 51.29, division: 'Unclassified', verified: false },
-  { id: 'SOL', code: 'SOL', name: 'Ssolan', x: 19.07, y: 37.64, division: 'Unclassified', verified: false },
-  { id: 'SPC', code: 'SPC', name: 'Sita Publcity Jn.', x: 5.23, y: 72.77, division: 'Unclassified', verified: false },
-  { id: 'SPN', code: 'SPN', name: 'Shahjahanpur Jn', x: 72.00, y: 44.00, division: 'Moradabad', verified: true },
-  { id: 'SPPR', code: 'SPPR', name: 'Rho Shudinpur', x: 5.35, y: 57.76, division: 'Unclassified', verified: false },
-  { id: 'SQJ', code: 'SQJ', name: 'Saila Khurd', x: 26.04, y: 77.10, division: 'Unclassified', verified: false },
-  { id: 'SQN', code: 'SQN', name: 'Sarai Kansrai', x: 4.18, y: 64.27, division: 'Unclassified', verified: false },
-  { id: 'SQR', code: 'SQR', name: 'Sultanpur Lodhi', x: 3.09, y: 91.63, division: 'Unclassified', verified: false },
-  { id: 'SRBH', code: 'SRBH', name: 'Saheed Ramphal Balhara', x: 5.41, y: 59.00, division: 'Unclassified', verified: false },
-  { id: 'SRE', code: 'SRE', name: 'Saharanpur Jn', x: 38.00, y: 26.00, division: 'Ambala', verified: true },
-  { id: 'SRM', code: 'SRM', name: 'Sarna', x: 26.43, y: 21.73, division: 'Unclassified', verified: false },
-  { id: 'SRMP', code: 'SRMP', name: 'Sirsi Makhdumpur', x: 10.91, y: 61.72, division: 'Unclassified', verified: false },
-  { id: 'SSW', code: 'SSW', name: 'Orsawa', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'SSZ', code: 'SSZ', name: 'Singh Wala', x: 13.86, y: 47.21, division: 'Unclassified', verified: false },
-  { id: 'STRA', code: 'STRA', name: 'Uontia', x: 26.91, y: 69.56, division: 'Unclassified', verified: false },
-  { id: 'SUJR', code: 'SUJR', name: 'Sujra', x: 2.64, y: 91.24, division: 'Unclassified', verified: false },
-  { id: 'SUM', code: 'SUM', name: 'Sajumma', x: 5.55, y: 50.63, division: 'Unclassified', verified: false },
-  { id: 'SUNM', code: 'SUNM', name: 'Sunamai', x: 16.65, y: 69.13, division: 'Unclassified', verified: false },
-  { id: 'SVDK', code: 'SVDK', name: 'Mate Veishno Devi Katro', x: 16.27, y: 14.64, division: 'Unclassified', verified: false },
-  { id: 'SWE', code: 'SWE', name: 'Siwaith', x: 2.58, y: 93.86, division: 'Unclassified', verified: false },
-  { id: 'SWNR', code: 'SWNR', name: 'Sewa Nagar', x: 14.49, y: 86.89, division: 'Unclassified', verified: false },
-  { id: 'SXZM', code: 'SXZM', name: 'Sopore', x: 23.37, y: 2.28, division: 'Unclassified', verified: false },
-  { id: 'SZM', code: 'SZM', name: 'Subzimandi', x: 3.74, y: 75.53, division: 'Unclassified', verified: false },
-  { id: 'TAPA', code: 'TAPA', name: 'Topa', x: 14.76, y: 45.28, division: 'Unclassified', verified: false },
-  { id: 'TBTN', code: 'TBTN', name: 'Thana Bhawan Town', x: 14.44, y: 85.65, division: 'Unclassified', verified: false },
-  { id: 'TD', code: 'TD', name: 'Ray Tanda', x: 4.88, y: 83.55, division: 'Unclassified', verified: false },
-  { id: 'TDP', code: 'TDP', name: 'Todarpur', x: 4.37, y: 73.83, division: 'Unclassified', verified: false },
-  { id: 'TDW', code: 'TDW', name: 'Tondwal', x: 3.38, y: 44.19, division: 'Unclassified', verified: false },
-  { id: 'THW', code: 'THW', name: 'Tharwai', x: 13.59, y: 61.19, division: 'Unclassified', verified: false },
-  { id: 'THWM', code: 'THWM', name: 'Tapeshwarngiff Dham', x: 5.10, y: 85.59, division: 'Unclassified', verified: false },
-  { id: 'TKD', code: 'TKD', name: 'Ighlakabad', x: 20.83, y: 87.54, division: 'Unclassified', verified: false },
-  { id: 'TKRP', code: 'TKRP', name: 'Fikoult Bowbbpuc', x: 5.10, y: 85.59, division: 'Unclassified', verified: false },
-  { id: 'TLH', code: 'TLH', name: 'Tithar', x: 29.39, y: 68.73, division: 'Unclassified', verified: false },
-  { id: 'TNDE', code: 'TNDE', name: 'Gnesar City', x: 12.24, y: 46.62, division: 'Unclassified', verified: false },
-  { id: 'TNJR', code: 'TNJR', name: 'Tajnagar', x: 4.91, y: 90.74, division: 'Unclassified', verified: false },
-  { id: 'TPZ', code: 'TPZ', name: 'Tapri Jn', x: 37.00, y: 23.00, division: 'Moradabad', verified: true },
-  { id: 'TQA', code: 'TQA', name: 'Lakia', x: 14.49, y: 86.89, division: 'Unclassified', verified: false },
-  { id: 'TRPL', code: 'TRPL', name: 'Tripal', x: 27.63, y: 23.66, division: 'Unclassified', verified: false },
-  { id: 'TSS', code: 'TSS', name: 'Teliscida Sohu', x: 17.62, y: 36.77, division: 'Unclassified', verified: false },
-  { id: 'TYK', code: 'TYK', name: 'Thabalke', x: 3.27, y: 91.59, division: 'Unclassified', verified: false },
-  { id: 'UCA', code: 'UCA', name: 'Uchana', x: 9.09, y: 53.10, division: 'Unclassified', verified: false },
-  { id: 'UCB', code: 'UCB', name: 'Unchi Bassi', x: 3.22, y: 88.90, division: 'Unclassified', verified: false },
-  { id: 'UCH', code: 'UCH', name: 'Loh Nehaulig', x: 13.30, y: 70.13, division: 'Unclassified', verified: false },
-  { id: 'UCR', code: 'UCR', name: 'Unchahar Jn', x: 80.00, y: 73.00, division: 'Lucknow', verified: true },
-  { id: 'UKN', code: 'UKN', name: 'Uklono', x: 4.19, y: 52.60, division: 'Unclassified', verified: false },
-  { id: 'ULN', code: 'ULN', name: 'Ssn Ulnabhari', x: 4.87, y: 83.08, division: 'Unclassified', verified: false },
-  { id: 'UMB', code: 'UMB', name: 'Ambala Cantt Jn', x: 30.00, y: 20.00, division: 'Ambala', verified: true },
-  { id: 'UPRD', code: 'UPRD', name: 'Dehat', x: 9.59, y: 86.30, division: 'Unclassified', verified: false },
-  { id: 'VIPU', code: 'VIPU', name: 'Vijaypur Jammu', x: 23.65, y: 18.87, division: 'Unclassified', verified: false },
-  { id: 'VJOD', code: 'VJOD', name: 'Wyathuna Nagdh Jagadhri', x: 13.71, y: 45.25, division: 'Unclassified', verified: false },
-  { id: 'VNN', code: 'VNN', name: 'Bhanaur', x: 5.35, y: 58.59, division: 'Unclassified', verified: false },
-  { id: 'VPO', code: 'VPO', name: 'Bhupiamau', x: 3.27, y: 91.59, division: 'Unclassified', verified: false },
-  { id: 'WR', code: 'WR', name: 'Wer Tin', x: 2.65, y: 64.43, division: 'Unclassified', verified: false },
-  { id: 'YNRK', code: 'YNRK', name: 'Yog Nagri Rishikesh', x: 13.71, y: 45.25, division: 'Unclassified', verified: false },
-  { id: 'ZBD', code: 'ZBD', name: 'Zafrabad Jn.', x: 5.35, y: 58.59, division: 'Unclassified', verified: false },
+  // ----------------------------------------------------
+  // SECTION 1: JAMMU & KASHMIR (USBRL & VALLEY)
+  // ----------------------------------------------------
+  { id: 'BRML', code: 'BRML', name: 'Baramulla', x: 22.63, y: 3.03, division: 'Jammu', verified: true, scheduledTrains: 16 },
+  { id: 'SXZM', code: 'SXZM', name: 'Sopore', x: 23.28, y: 2.67, division: 'Jammu', verified: true },
+  { id: 'HME', code: 'HME', name: 'Hamre', x: 24.18, y: 3.17, division: 'Jammu', verified: true },
+  { id: 'PTTN', code: 'PTTN', name: 'Pattan', x: 24.48, y: 3.66, division: 'Jammu', verified: true },
+  { id: 'MZMA', code: 'MZMA', name: 'Mazhom', x: 24.58, y: 4.16, division: 'Jammu', verified: true },
+  { id: 'NDAM', code: 'NDAM', name: 'Nadigam', x: 25.03, y: 4.3, division: 'Jammu', verified: false },
+  { id: 'BDGM', code: 'BDGM', name: 'Budgam', x: 25.48, y: 4.23 , division: 'Jammu', verified: true, scheduledTrains: 24 },
+  { id: 'SINA', code: 'SINA', name: 'Srinagar', x: 26.08, y: 3.18, division: 'Jammu', verified: true, scheduledTrains: 28 },
+  { id: 'PMPE', code: 'PMPE', name: 'Pampore', x: 26.43, y: 4.3, division: 'Jammu', verified: false },
+  { id: 'KAPE', code: 'KAPE', name: 'Kakapora', x: 26.63, y: 4.8, division: 'Jammu', verified: false },
+  { id: 'RPAP', code: 'RPAP', name: 'Ratnipora', x: 26.93, y: 5.15, division: 'Jammu', verified: false },
+  { id: 'ATPA', code: 'ATPA', name: 'Awantipura', x: 27.28, y: 5.43, division: 'Jammu', verified: false },
+  { id: 'PJGM', code: 'PJGM', name: 'Panzgam', x: 27.38, y: 5.86, division: 'Jammu', verified: false },
+  { id: 'BJBA', code: 'BJBA', name: 'Bijbehara', x: 27.48, y: 6.25, division: 'Jammu', verified: false },
+  { id: 'ANT', code: 'ANT', name: 'Anantnag', x: 27.58, y: 7.2, division: 'Jammu', verified: true, scheduledTrains: 24 },
+  { id: 'SDUA', code: 'SDUA', name: 'Sadura', x: 27.53, y: 7.91, division: 'Jammu', verified: false },
+  { id: 'QG', code: 'QG', name: 'Qazigund', x: 27.28, y: 8.62, division: 'Jammu', verified: true, scheduledTrains: 22 },
+  { id: 'HRSB', code: 'HRSB', name: 'Hiller Shahabad', x: 27.73, y: 8.9, division: 'Jammu', verified: false },
+  { id: 'BAHL', code: 'BAHL', name: 'Banihal', x: 27.78, y: 9.33, division: 'Jammu', verified: true, scheduledTrains: 20 },
+  { id: 'KARI', code: 'KARI', name: 'Khari', x: 27.88, y: 10.04, division: 'Jammu', verified: false },
+  { id: 'SMBR', code: 'SMBR', name: 'Sumber', x: 27.83, y: 10.86, division: 'Jammu', verified: false },
+  { id: 'SVDN', code: 'SGDN', name: 'Sangaldan', x: 27.83, y: 11.42, division: 'Jammu', verified: false },
+  { id: 'SWKE', code: 'SWKE', name: 'Sawalkote', x: 27.63, y: 12.06, division: 'Jammu', verified: false },
+  { id: 'DUCA', code: 'DUGA', name: 'Dugga', x: 26.98, y: 13.48, division: 'Jammu', verified: false },
+  { id: 'BAKK', code: 'BAKK', name: 'Bakkal', x: 26.63, y: 13.9, division: 'Jammu', verified: false },
+  { id: 'REASI', code: 'REAI', name: 'Reasi', x: 26.03, y: 14.25, division: 'Jammu', verified: false },
+  { id: 'SVDK', code: 'SVDK', name: 'Shri Mata Vaishno Devi Katra', x: 25.92, y: 14.82, division: 'Jammu', verified: true, scheduledTrains: 38 },
+  { id: 'CRWL', code: 'CRWL', name: 'Chak Rakhwal', x: 27.38, y: 15.39, division: 'Jammu', verified: false },
+  { id: 'MCTM', code: 'MCTM', name: 'Martyr Capt. Tushar Mahajan', x: 28.28, y: 15.53, division: 'Jammu', verified: true, scheduledTrains: 34 },
+  { id: 'RMJK', code: 'RMJK', name: 'Ramnagar Road', x: 28.23, y: 16.75, division: 'Jammu', verified: false },
+  { id: 'MNVL', code: 'MNVL', name: 'Manwal', x: 27.13, y: 17.1, division: 'Jammu', verified: false },
+  { id: 'SGRR', code: 'SGRR', name: 'Sangar', x: 26.68, y: 17.17, division: 'Jammu', verified: false },
+  { id: 'BLA', code: 'BLA', name: 'Bajalta', x: 26.18, y: 17.45, division: 'Jammu', verified: false },
+  { id: 'JAT', code: 'JAT', name: 'Jammu Tawi', x: 25.68, y: 17.74, division: 'Jammu', verified: true, scheduledTrains: 72 },
+  { id: 'BBMN', code: 'BBMN', name: 'Bari Brahman', x: 25.98, y: 18.3, division: 'Jammu', verified: false },
+  { id: 'VJPJ', code: 'VJPJ', name: 'Vijaypur Jammu', x: 26.38, y: 18.8, division: 'Jammu', verified: false },
+  { id: 'SMBX', code: 'SMBX', name: 'Samba', x: 26.83, y: 19.08, division: 'Jammu', verified: false },
+  { id: 'GHGL', code: 'GHGL', name: 'Ghagwal', x: 27.28, y: 19.65, division: 'Jammu', verified: false },
+  { id: 'HRNR', code: 'HRNR', name: 'Hira Nagar', x: 27.98, y: 20.57, division: 'Jammu', verified: false },
+  { id: 'CKDL', code: 'CKDL', name: 'Chak Dayala', x: 28.53, y: 20.99, division: 'Jammu', verified: false },
+  { id: 'CHNR', code: 'CHNR', name: 'Chhan Arorian', x: 29.03, y: 21.35, division: 'Jammu', verified: false },
+  { id: 'BDHY', code: 'BDHY', name: 'Budhi', x: 29.63, y: 21.56, division: 'Jammu', verified: false },
+  { id: 'KTHU', code: 'KTHU', name: 'Kathua', x: 30.13, y: 22.18, division: 'Jammu', verified: true, scheduledTrains: 46 },
+  { id: 'MDPB', code: 'MDPB', name: 'Madhopur Punjab', x: 30.43, y: 22.82, division: 'Jammu', verified: false },
+  { id: 'SJNP', code: 'SJNP', name: 'Sujanpur', x: 30.63, y: 23.17, division: 'Jammu', verified: false },
+  { id: 'PTK', code: 'PTK', name: 'Pathankot Jn', x: 31.13, y: 23.19, division: 'Jammu', verified: true, scheduledTrains: 68 },
+  { id: 'PTKC', code: 'PTKC', name: 'Pathankot Cantt', x: 31.33, y: 23.75, division: 'Jammu', verified: true, scheduledTrains: 55 },
+  { id: 'BHRL', code: 'BHRL', name: 'Bharoli Jn', x: 30.83, y: 23.47, division: 'Jammu', verified: false },
+
+  // ----------------------------------------------------
+  // SECTION 2: KANGRA VALLEY (NARROW GAUGE LINE)
+  // ----------------------------------------------------
+  { id: 'DLSR', code: 'DLSR', name: 'Dalhousie Road', x: 31.58, y: 23.09, division: 'Jammu', verified: false },
+  { id: 'NUPR', code: 'NUPR', name: 'Nurpur Road', x: 32.48, y: 23.44, division: 'Jammu', verified: false },
+  { id: 'BLDL', code: 'BLDL', name: 'Balledapirlarath', x: 33.03, y: 23.87, division: 'Jammu', verified: false },
+  { id: 'JWLS', code: 'JWLS', name: 'Jawanwala Shehar', x: 33.43, y: 24.5, division: 'Jammu', verified: false },
+  { id: 'MGRP', code: 'MGRP', name: 'Meghrajpura', x: 33.73, y: 25.13, division: 'Jammu', verified: false },
+  { id: 'BRHL', code: 'BRHL', name: 'Barial Himachal', x: 34.13, y: 25.85, division: 'Jammu', verified: false },
+  { id: 'GULR', code: 'GULR', name: 'Guler', x: 34.63, y: 26.49, division: 'Jammu', verified: false },
+  { id: 'TRPL', code: 'TRPL', name: 'Tripal', x: 35.28, y: 26.56, division: 'Jammu', verified: false },
+  { id: 'KPLR', code: 'KPLR', name: 'Kopar Lahar', x: 35.78, y: 26.2, division: 'Jammu', verified: false },
+  { id: 'KGMR', code: 'KGMR', name: 'Kangra Mandir', x: 36.33, y: 25.92, division: 'Jammu', verified: false },
+  { id: 'NGRT', code: 'NGRT', name: 'Nagrota', x: 36.93, y: 25.78, division: 'Jammu', verified: false },
+  { id: 'CMMG', code: 'CMMG', name: 'Chamunda Marg', x: 37.23, y: 25.85, division: 'Jammu', verified: false },
+  { id: 'PLMX', code: 'PLMX', name: 'Palampur Himachal', x: 38.08, y: 26.27, division: 'Jammu', verified: false },
+  { id: 'BJPL', code: 'BJPL', name: 'Baijnath Paprola', x: 39.28, y: 27.12, division: 'Jammu', verified: true, scheduledTrains: 12 },
+  { id: 'JDNX', code: 'JDNX', name: 'Joginder Nagar', x: 39.93, y: 26.49, division : 'Jammu', verified: true, scheduledTrains: 8 },
+
+  // ----------------------------------------------------
+  // SECTION 3: PUNJAB MAINWAYS & BRANCH CORRIDORS
+  // ----------------------------------------------------
+  { id: 'SRM', code: 'SRM', name: 'Sarna', x: 30.47, y: 23.81, division: 'Firozpur', verified: false },
+  { id: 'JK', code: 'JK', name: 'Jakolari', x: 30.28, y: 24.16, division: 'Firozpur', verified: false },
+  { id: 'PMQ', code: 'PMQ', name: 'Parmanand', x: 29.92, y: 24.6, division: 'Firozpur', verified: false },
+  { id: 'DNN', code: 'DNN', name: 'Dina Nagar', x: 29.57, y: 24.96, division: 'Firozpur', verified: false },
+  { id: 'GSP', code: 'GSP', name: 'Gurdaspur', x: 29.22, y: 25.24, division: 'Firozpur', verified: false },
+  { id: 'BAT', code: 'BAT', name: 'Batala Jn', x: 27.22, y: 27.94, division: 'Firozpur', verified: true, scheduledTrains: 36 },
+  { id: 'DBNK', code: 'DBNK', name: 'Dera Baba Nanak', x: 25.48, y: 26.37, division: 'Firozpur', verified: true, scheduledTrains: 10 },
+  { id: 'VKA', code: 'VKA', name: 'Verka Jn', x: 25.28, y: 29.45, division: 'Firozpur', verified: true, scheduledTrains: 42 },
+  { id: 'ATARI', code: 'ATT', name: 'Atari Sham Singh', x: 22.78, y: 30.22, division: 'Firozpur', verified: true, scheduledTrains: 8 },
+  { id: 'ASR', code: 'ASR', name: 'Amritsar Jn', x: 24.63, y: 29.94, division: 'Firozpur', verified: true, scheduledTrains: 135 },
+  { id: 'BGTN', code: 'BGTN', name: 'Bhagtanwala', x: 24.83, y: 30.65, division: 'Firozpur', verified: false },
+  { id: 'TNA', code: 'TTO', name: 'Tarn Taran Jn', x: 25.13, y: 31.64, division: 'Firozpur', verified: true, scheduledTrains: 30 },
+  { id: 'KEMK', code: 'KEMK', name: 'Khem Karan', x: 22.33, y: 34.4, division: 'Firozpur', verified: true, scheduledTrains: 10 },
+  { id: 'BEAS', code: 'BEAS', name: 'Beas Jn', x: 27.43, y: 31.03, division: 'Firozpur', verified: true, scheduledTrains: 88 },
+  { id: 'JUC', code: 'JUC', name: 'Jalandhar City', x: 30.28, y: 33.24, division: 'Firozpur', verified: true, scheduledTrains: 110 },
+  { id: 'JRC', code: 'JRC', name: 'Jalandhar Cantt', x: 30.78, y: 33.52, division: 'Firozpur', verified: true, scheduledTrains: 94 },
+  { id: 'HSX', code: 'HSX', name: 'Hoshiarpur', x: 33.08, y: 31.1, division: 'Firozpur', verified: true, scheduledTrains: 18 },
+  { id: 'PGW', code: 'PGW', name: 'Phagwara Jn', x: 31.68, y: 34.15, division: 'Ambala', verified: false },
+  { id: 'PHR', code: 'PHR', name: 'Phillaur Jn', x: 39.93, y: 36.34, division: 'Firozpur', verified: true, scheduledTrains: 52 },
+  { id: 'NSS', code: 'NSS', name: 'Nawanshahr Doaba', x: 34.73, y: 35.42, division: 'Firozpur', verified: true, scheduledTrains: 14 },
+  { id: 'RHU', code: 'RHU', name: 'Rahon', x: 34.58, y: 36.2, division: 'Firozpur', verified: false },
+  { id: 'NKD', code: 'NRO', name: 'Nakodar Jn', x: 29.73, y: 35.63 , division: 'Firozpur', verified: true, scheduledTrains: 26 },
+  { id: 'LNK', code: 'LNK', name: 'Lohian Khas Jn', x: 27.53, y: 35.14, division: 'Firozpur', verified: true, scheduledTrains: 30 },
+  { id: 'SQR', code: 'SQR', name: 'Sultanpur Lodhi', x: 27.68, y: 34.71, division: 'Firozpur', verified: false },
+  { id: 'FZR', code: 'FZR', name: 'Firozpur Cantt Jn', x: 22.18, y: 37.47, division: 'Firozpur', verified: true, scheduledTrains: 58 },
+  { id: 'FZP', code: 'FZP', name: 'Firozpur City', x: 21.98, y: 36.91, division: 'Firozpur', verified: false },
+  { id: 'FDK', code: 'FDK', name: 'Faridkot', x: 23.38, y: 39.81, division: 'Firozpur', verified: false },
+  { id: 'KKP', code: 'KKP', name: 'Kotkapura Jn', x: 23.98, y: 41.15, division: 'Firozpur', verified: true, scheduledTrains: 36 },
+  { id: 'MKS', code: 'MKS', name: 'Muktsar', x: 21.08, y: 42.43, division: 'Firozpur', verified: false },
+  { id: 'FKA', code: 'FKA', name: 'Fazilka Jn', x: 17.23, y: 42.36, division: 'Firozpur', verified: true, scheduledTrains: 24 },
+  { id: 'ABS', code: 'ABS', name: 'Abohar Jn', x: 17.73, y: 45.19, division: 'Firozpur', verified: true, scheduledTrains: 32 },
+  { id: 'BTI', code: 'BTI', name: 'Bathinda Jn', x: 24.63, y: 44.9, division: 'Firozpur', verified: true, scheduledTrains: 92 },
+
+  // ----------------------------------------------------
+  // SECTION 4: AMBALA, CHANDIGARH, SHIMLA & HARYANA
+  // ----------------------------------------------------
+  { id: 'LDH', code: 'LDH', name: 'Ludhiana Jn', x: 32.33, y: 37.93, division: 'Ambala', verified: true, scheduledTrains: 155 },
+  { id: 'KNN', code: 'KNN', name: 'Khanna', x: 35.68, y: 40.05, division: 'Ambala', verified: false },
+  { id: 'SIR', code: 'SIR', name: 'Sirhind Jn', x: 36.98, y: 40.9, division: 'Ambala', verified: true, scheduledTrains: 78 },
+  { id: 'NMDA', code: 'NMDA', name: 'New Morinda', x: 37.73, y: 39.13, division: 'Ambala', verified: false },
+  { id: 'RPAR', code: 'RPAR', name: 'Rupnagar', x: 38.28, y: 36.51, division: 'Ambala', verified: false },
+  { id: 'ANSB', code: 'ANSB', name: 'Anandpur Sahib', x: 37.73, y: 34.46, division: 'Ambala', verified: true, scheduledTrains: 26 },
+  { id: 'NNGL', code: 'NLDM', name: 'Nangal Dam', x: 36.98 , y: 33.54, division: 'Ambala', verified: false },
+  { id: 'DLPC', code: 'DLPC', name: 'Daulatpur Chowk', x: 34.08, y: 28.5, division: 'Ambala', verified: true, scheduledTrains: 16 },
+  { id: 'CDG', code: 'CDG', name: 'Chandigarh Jn', x: 40.33, y: 39.69, division: 'Ambala', verified: true, scheduledTrains: 85 },
+  { id: 'KLK', code: 'KLK', name: 'Kalka', x: 41.13, y: 38.66, division: 'Ambala', verified: true, scheduledTrains: 40 },
+  { id: 'SOL', code: 'SOL', name: 'Solan', x: 42.68, y: 37.81, division: 'Ambala', verified: false },
+  { id: 'SML', code: 'SML', name: 'Shimla', x: 43.68, y: 35.83, division: 'Ambala', verified: true, scheduledTrains: 14 },
+  { id: 'RPJ', code: 'RPJ', name: 'Rajpura Jn', x: 38.28, y: 42.13, division: 'Ambala', verified: true, scheduledTrains: 65 },
+  { id: 'PTA', code: 'PTA', name: 'Patiala', x: 36.58, y: 43.94, division: 'Ambala', verified: true, scheduledTrains: 48 },
+  { id: 'DUI', code: 'DUI', name: 'Dhuri Jn', x: 32.23, y: 43.3, division: 'Ambala', verified: true, scheduledTrains: 52 },
+  { id: 'SAG', code: 'SAG', name: 'Sangrur', x: 32.13, y: 44.65, division: 'Ambala', verified: false },
+  { id: 'JHL', code: 'JHL', name: 'Jakhal Jn', x: 31.88, y: 49.55, division: 'Delhi', verified: true, scheduledTrains: 44 },
+  { id: 'JIND', code: 'JIND', name: 'Jind Jn', x: 35.73, y: 54.74, division: 'Delhi', verified: true, scheduledTrains: 48 },
+  { id: 'ROK', code: 'ROK', name: 'Rohtak Jn', x: 37.68, y: 58.99, division: 'Delhi', verified: true, scheduledTrains: 65 },
+  { id: 'UMB', code: 'UMB', name: 'Ambala Cantt Jn', x: 39.93, y: 43.7, division: 'Ambala', verified: true, scheduledTrains: 165 },
+  { id: 'UBC', code: 'UBC', name: 'Ambala City', x: 39.58, y: 43.35, division: 'Ambala', verified: false },
+  { id: 'KKDE', code: 'KKDE', name: 'Kurukshetra Jn', x: 40.23, y: 47.81, division: 'Delhi', verified: true, scheduledTrains: 75 },
+  { id: 'PNP', code: 'PNP', name: 'Panipat Jn', x: 41.23, y: 54.25, division: 'Delhi', verified: true, scheduledTrains: 94 },
+  { id: 'SNP', code: 'SNP', name: 'Sonipat', x: 41.63, y: 58.35, division: 'Delhi', verified: false },
+
+  // ----------------------------------------------------
+  // SECTION 5: DELHI AREA & DIRECT REACH
+  // ----------------------------------------------------
+  { id: 'DLI', code: 'DLI', name: 'Delhi Jn (Old Delhi)', x: 43.09, y: 62.18, division: 'Delhi', verified: true, scheduledTrains: 185 },
+  { id: 'NDLS', code: 'NDLS', name: 'New Delhi', x: 43.15, y: 63.45, division: 'Delhi', verified: true, scheduledTrains: 245 },
+  { id: 'HNZM', code: 'NZM', name: 'Hazrat Nizamuddin', x: 43.58, y: 63.42, division: 'Delhi', verified: true, scheduledTrains: 140 },
+  { id: 'DEC', code: 'DEC', name: 'Delhi Cantt', x: 42.53, y: 62.49, division: 'Delhi', verified: true, scheduledTrains: 60 },
+  { id: 'GGN', code: 'GGN', name: 'Gurgaon', x: 41.88, y: 63.72, division: 'Delhi', verified: true, scheduledTrains: 55 },
+  { id: 'GHH', code: 'GHH', name: 'Garhi Harsaru Jn', x: 40.78, y: 64.14, division: 'Delhi', verified: true, scheduledTrains: 40 },
+  { id: 'RE', code: 'RE', name: 'Rewari Jn', x: 37.63, y: 65.76, division: 'Delhi', verified: true, scheduledTrains: 80 },
+  { id: 'GZB', code: 'GZB', name: 'Ghaziabad Jn', x: 45.03, y: 61.44, division: 'Delhi', verified: true, scheduledTrains: 210 },
+  { id: 'MTC', code: 'MTC', name: 'Meerut City Jn', x: 47.1, y: 58, division: 'Delhi', verified: true, scheduledTrains: 78 },
+  { id: 'MUT', code: 'MUT', name: 'Meerut Cantt', x: 47.25, y: 57.43, division: 'Delhi', verified: false },
+  { id: 'MZN', code: 'MZN', name: 'Muzaffarnagar Jn', x: 47.38, y: 53.4, division: 'Delhi', verified: true, scheduledTrains: 86 },
+  { id: 'DBD', code: 'DBD', name: 'Deoband', x: 46.88, y: 51.33, division: 'Delhi', verified: false },
+  { id: 'TPZ', code: 'TPZ', name: 'Tapri Jn', x: 46.28, y: 48.8, division: 'Ambala', verified: true, scheduledTrains: 42 },
+  { id: 'SRE', code: 'SRE', name: 'Saharanpur Jn', x: 46.28, y: 48.16, division: 'Ambala', verified: true, scheduledTrains: 120 },
+  { id: 'YJUD', code: 'YJUD', name: 'Yamunanagar-Jagadhri', x: 44.23, y: 46.6, division: 'Ambala', verified: true, scheduledTrains: 82 },
+  { id: 'HPU', code: 'HPU', name: 'Hapur Jn', x: 48.28, y: 60.76, division: 'Delhi', verified: true, scheduledTrains: 70 },
+  { id: 'GMS', code: 'GMS', name: 'Garhmuktesar', x: 50.03, y: 60.27, division: 'Moradabad', verified: false },
+  { id: 'GJL', code: 'GJL', name: 'Gajraula Jn', x: 51.73, y: 59.84, division: 'Moradabad', verified: true, scheduledTrains: 52 },
+
+  // ----------------------------------------------------
+  // SECTION 6: MORADABAD DIVISION & UTTARAKHAND
+  // ----------------------------------------------------
+  { id: 'RK', code: 'RK', name: 'Roorkee', x: 49.18, y: 49.75, division: 'Moradabad', verified: true, scheduledTrains: 76 },
+  { id: 'LRJ', code: 'LRJ', name: 'Laksar Jn', x: 50.68, y: 51.09, division: 'Moradabad', verified: true, scheduledTrains: 65 },
+  { id: 'HW', code: 'HW', name: 'Haridwar', x: 51.03, y: 48.64, division: 'Moradabad', verified: true, scheduledTrains: 74 },
+  { id: 'RWL', code: 'RWL', name: 'Raiwala Jn', x: 51.38, y: 47.81, division: 'Moradabad', verified: true, scheduledTrains: 42 },
+  { id: 'DDN', code: 'DDN', name: 'Dehradun', x: 50.28, y: 44.56, division: 'Moradabad', verified: true, scheduledTrains: 34 },
+  { id: 'YNRK', code: 'YNRK', name: 'Yog Nagri Rishikesh', x: 51.83, y: 46.11, division: 'Moradabad', verified: true, scheduledTrains: 22 },
+  { id: 'NBD', code: 'NBD', name: 'Najibabad Jn', x: 52.88, y: 52.34, division: 'Moradabad', verified: true, scheduledTrains: 58 },
+  { id: 'KTW', code: 'KTW', name: 'Kotdwara', x: 54.73, y: 50.99, division: 'Moradabad', verified: false },
+  { id: 'NGG', code: 'NGG', name: 'Nagina', x: 53.48, y: 53.8, division: 'Moradabad', verified: false },
+  { id: 'DPR', code: 'DPR', name: 'Dhampur', x: 54.28, y: 55.14, division: 'Moradabad', verified: false },
+  { id: 'SEO', code: 'SEO', name: 'Seohara', x: 54.83, y: 56.06, division: 'Moradabad', verified: false },
+  { id: 'KNT', code: 'KNT', name: 'Kanth', x: 55.23, y: 57.33, division: 'Moradabad', verified: false },
+  { id: 'MB', code: 'MB', name: 'Moradabad Jn', x: 56.28, y: 59.66, division: 'Moradabad', verified: true, scheduledTrains: 175 },
+  { id: 'KGB', code: 'KGB', name: 'Katghar Jn', x: 56.68 , y: 59.8, division: 'Moradabad', verified: false },
+  { id: 'RJK', code: 'RJK', name: 'Raja Ka Sahaspur Jn', x: 56.58, y: 62.06, division: 'Moradabad', verified: true, scheduledTrains: 38 },
+  { id: 'CH', code: 'CH', name: 'Chandausi Jn', x: 56.28, y: 64.64, division: 'Moradabad', verified: true, scheduledTrains: 42 },
+  { id: 'RMU', code: 'RMU', name: 'Rampur Jn', x: 58.63, y: 60.25, division: 'Moradabad', verified: true, scheduledTrains: 64 },
+  { id: 'BE', code: 'BE', name: 'Bareilly Jn', x: 61.68, y: 65.01, division: 'Moradabad', verified: true, scheduledTrains: 145 },
+  { id: 'BRYC', code: 'BRYC', name: 'Bareilly Cantt', x: 61.98, y: 65.64, division: 'Moradabad', verified: false },
+  { id: 'PMR', code: 'PMR', name: 'Pitamberpur', x: 62.58, y: 66.71, division: 'Moradabad', verified: false },
+  { id: 'TLH', code: 'TLH', name: 'Tilhar', x: 64.18, y: 68.69, division: 'Moradabad', verified: false },
+  { id: 'SPN', code: 'SPN', name: 'Shahjahanpur Jn', x: 65.83, y: 69.96, division: 'Moradabad', verified: true, scheduledTrains: 90 },
+  { id: 'ROZA', code: 'ROZA', name: 'Roza Jn', x: 66.53, y: 70.6, division: 'Moradabad', verified: true, scheduledTrains: 45 },
+
+  // ----------------------------------------------------
+  // SECTION 7: LUCKNOW DIVISION
+  // ----------------------------------------------------
+  { id: 'AJI', code: 'AJI', name: 'Anjhi Shahabad', x: 66.58, y: 72.79, division: 'Moradabad', verified: false },
+  { id: 'HRI', code: 'HRI', name: 'Hardoi', x: 68.23, y: 75.77, division: 'Lucknow', verified: true, scheduledTrains: 80 },
+  { id: 'BLM', code: 'BLM', name: 'Balamau Jn', x: 70.23, y: 78.17, division: 'Lucknow', verified: true, scheduledTrains: 50 },
+  { id: 'SPC', code: 'SPC', name: 'Sitapur City Jn', x: 72.48, y: 73.71, division: 'Lucknow', verified: true, scheduledTrains: 32 },
+  { id: 'SAN', code: 'SAN', name: 'Sandila', x: 71.13, y: 78.95, division: 'Lucknow', verified: false },
+  { id: 'LKO', code: 'LKO', name: 'Lucknow Charbagh', x: 73.88, y: 81.12, division: 'Lucknow', verified: true, scheduledTrains: 215 },
+  { id: 'BBK', code: 'BBK', name: 'Barabanki Jn', x: 76.78, y: 80.27, division: 'Lucknow', verified: true, scheduledTrains: 95 },
+  { id: 'RBL', code: 'RBL', name: 'Raebareli Jn', x: 77.38, y: 87.45, division: 'Lucknow', verified: true, scheduledTrains: 62 },
+  { id: 'UCR', code: 'UCR', name: 'Unchahar Jn', x: 77.98, y: 90.35, division: 'Lucknow', verified: true, scheduledTrains: 36 },
+  { id: 'AYC', code: 'AYC', name: 'Ayodhya Cantt', x: 84.68, y: 81.88, division: 'Lucknow', verified: true, scheduledTrains: 75 },
+  { id: 'AY', code: 'AY', name: 'Ayodhya Dham', x: 85.78, y: 82.31, division: 'Lucknow', verified: true, scheduledTrains: 85 },
+  { id: 'ABP', code: 'ABP', name: 'Akbarpur Jn', x: 88.53, y: 85.35, division: 'Lucknow', verified: true, scheduledTrains: 42 },
+  { id: 'SLN', code: 'SLN', name: 'Sultanpur Jn', x: 84.38, y: 87.33, division: 'Lucknow', verified: true, scheduledTrains: 58 },
+  { id: 'PBH', code: 'MBDP', name: 'Maa Belha Devi Dham Pratapgarh', x: 83.88, y: 90.87, division: 'Lucknow', verified: true, scheduledTrains: 66 },
+  { id: 'JNU', code: 'JNU', name: 'Jaunpur Jn', x: 89.88, y: 92.01, division: 'Lucknow', verified: true, scheduledTrains: 70 },
+  { id: 'ZBD', code: 'ZBD', name: 'Zafarabad Jn', x: 89.73, y: 92.06, division: 'Lucknow', verified: true, scheduledTrains: 38 }
 ];
 
 const INITIAL_EDGES: Edge[] = [
-  // Edges are only drawn between VERIFIED major junctions — OCR can extract
-  // station names/positions from text, but cannot reliably detect which
-  // thin colored lines on the map connect which stations. Wayside stations
-  // (verified: false) are shown as markers only, without connecting lines.
-  { id: 'e-jat-ptk', from: 'JAT', to: 'PTK', distanceKm: 90, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-ptk-asr', from: 'PTK', to: 'ASR', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-asr-beas', from: 'ASR', to: 'BEAS', distanceKm: 25, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-beas-juc', from: 'BEAS', to: 'JUC', distanceKm: 40, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-juc-jrc', from: 'JUC', to: 'JRC', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-jrc-nkd', from: 'JRC', to: 'NKD', distanceKm: 25, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-nkd-fzr', from: 'NKD', to: 'FZR', distanceKm: 90, lineType: 'UP', status: 'conflict', blockId: 'BLK-NR-410', dept: 'S&T' },
-  { id: 'e-ldh-phr', from: 'LDH', to: 'PHR', distanceKm: 20, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-phr-juc', from: 'PHR', to: 'JUC', distanceKm: 20, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-fzr-kkp', from: 'FZR', to: 'KKP', distanceKm: 50, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-kkp-bti', from: 'KKP', to: 'BTI', distanceKm: 30, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-bti-abs', from: 'BTI', to: 'ABS', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-abs-fka', from: 'ABS', to: 'FKA', distanceKm: 30, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-umb-sir', from: 'UMB', to: 'SIR', distanceKm: 30, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-sir-ldh', from: 'SIR', to: 'LDH', distanceKm: 50, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-umb-sre', from: 'UMB', to: 'SRE', distanceKm: 100, lineType: 'BOTH', status: 'maintenance-done', dept: 'Civil' },
-  { id: 'e-sre-mzn', from: 'SRE', to: 'MZN', distanceKm: 45, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-mzn-gzb', from: 'MZN', to: 'GZB', distanceKm: 90, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-sre-nbd', from: 'SRE', to: 'NBD', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-ndls-dli', from: 'NDLS', to: 'DLI', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-dli-umb', from: 'DLI', to: 'UMB', distanceKm: 200, lineType: 'DOWN', status: 'clear' },
-  { id: 'e-dli-gzb', from: 'DLI', to: 'GZB', distanceKm: 20, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-gzb-hpu', from: 'GZB', to: 'HPU', distanceKm: 45, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-hpu-mb', from: 'HPU', to: 'MB', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-gzb-mb', from: 'GZB', to: 'MB', distanceKm: 141, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-402', dept: 'OHE' },
-  { id: 'e-ndls-ghh', from: 'NDLS', to: 'GHH', distanceKm: 25, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-umb-tpz', from: 'UMB', to: 'TPZ', distanceKm: 176, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-tpz-mb', from: 'TPZ', to: 'MB', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-nbd-rwl', from: 'NBD', to: 'RWL', distanceKm: 70, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-mb-rjk', from: 'MB', to: 'RJK', distanceKm: 50, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-rjk-be', from: 'RJK', to: 'BE', distanceKm: 40, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-mb-ch', from: 'MB', to: 'CH', distanceKm: 90, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-ch-be', from: 'CH', to: 'BE', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-be-kgb', from: 'BE', to: 'KGB', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-be-spn', from: 'BE', to: 'SPN', distanceKm: 90, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-spn-roza', from: 'SPN', to: 'ROZA', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-roza-lko', from: 'ROZA', to: 'LKO', distanceKm: 140, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-ndls-lko', from: 'NDLS', to: 'LKO', distanceKm: 512, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-415', dept: 'Civil' },
-  { id: 'e-lko-blm', from: 'LKO', to: 'BLM', distanceKm: 65, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-lko-ayc', from: 'LKO', to: 'AYC', distanceKm: 135, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-ayc-sln', from: 'AYC', to: 'SLN', distanceKm: 50, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-lko-rbl', from: 'LKO', to: 'RBL', distanceKm: 80, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-rbl-ucr', from: 'RBL', to: 'UCR', distanceKm: 45, lineType: 'BOTH', status: 'clear' },
+  // USBRL Valley Edge Sequence
+  { id: 'e-brml-sxzm', from: 'BRML', to: 'SXZM', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sxzm-hme', from: 'SXZM', to: 'HME', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-hme-pttn', from: 'HME', to: 'PTTN', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pttn-mzma', from: 'PTTN', to: 'MZMA', distanceKm: 9, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mzma-ndam', from: 'MZMA', to: 'NDAM', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ndam-bdgm', from: 'NDAM', to: 'BDGM', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bdgm-sina', from: 'BDGM', to: 'SINA', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sina-pmpe', from: 'SINA', to: 'PMPE', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pmpe-kape', from: 'PMPE', to: 'KAPE', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kape-rpap', from: 'KAPE', to: 'RPAP', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rpap-atpa', from: 'RPAP', to: 'ATPA', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-atpa-pjgm', from: 'ATPA', to: 'PJGM', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pjgm-bjba', from: 'PJGM', to: 'BJBA', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bjba-ant', from: 'BJBA', to: 'ANT', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ant-sdua', from: 'ANT', to: 'SDUA', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sdua-qg', from: 'SDUA', to: 'QG', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-qg-hrsb', from: 'QG', to: 'HRSB', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-hrsb-bahl', from: 'HRSB', to: 'BAHL', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bahl-kari', from: 'BAHL', to: 'KARI', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kari-smbr', from: 'KARI', to: 'SMBR', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-smbr-svdn', from: 'SMBR', to: 'SVDN', distanceKm: 19, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-svdn-swke', from: 'SVDN', to: 'SWKE', distanceKm: 18, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-001', dept: 'Civil' },
+  { id: 'e-swke-duca', from: 'SWKE', to: 'DUCA', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-duca-bakk', from: 'DUCA', to: 'BAKK', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bakk-reasi', from: 'BAKK', to: 'REASI', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-reasi-svdk', from: 'REASI', to: 'SVDK', distanceKm: 17, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-svdk-crwl', from: 'SVDK', to: 'CRWL', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-crwl-mctm', from: 'CRWL', to: 'MCTM', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mctm-rmjk', from: 'MCTM', to: 'RMJK', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rmjk-mnvl', from: 'RMJK', to: 'MNVL', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mnvl-sgrr', from: 'MNVL', to: 'SGRR', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sgrr-bla', from: 'SGRR', to: 'BLA', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bla-jat', from: 'BLA', to: 'JAT', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jat-bbmn', from: 'JAT', to: 'BBMN', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bbmn-vjpj', from: 'BBMN', to: 'VJPJ', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-vjpj-smbx', from: 'VJPJ', to: 'SMBX', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-smbx-ghgl', from: 'SMBX', to: 'GHGL', distanceKm: 9, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ghgl-hrnr', from: 'GHGL', to: 'HRNR', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-hrnr-ckdl', from: 'HRNR', to: 'CKDL', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ckdl-chnr', from: 'CKDL', to: 'CHNR', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-chnr-bdhy', from: 'CHNR', to: 'BDHY', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bdhy-kthu', from: 'BDHY', to: 'KTHU', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kthu-mdpb', from: 'KTHU', to: 'MDPB', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mdpb-sjnp', from: 'MDPB', to: 'SJNP', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sjnp-ptk', from: 'SJNP', to: 'PTK', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ptk-ptkc', from: 'PTK', to: 'PTKC', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ptk-bhrl', from: 'PTK', to: 'BHRL', distanceKm: 3, lineType: 'BOTH', status: 'clear' },
 
+  // Kangra Valley Narrow Gauge Route
+  { id: 'e-ptk-dlsr', from: 'PTK', to: 'DLSR', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dlsr-nupr', from: 'DLSR', to: 'NUPR', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nupr-bldl', from: 'NUPR', to: 'BLDL', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bldl-jwls', from: 'BLDL', to: 'JWLS', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jwls-mgrp', from: 'JWLS', to: 'MGRP', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mgrp-brhl', from: 'MGRP', to: 'BRHL', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-brhl-gulr', from: 'BRHL', to: 'GULR', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-gulr-trpl', from: 'GULR', to: 'TRPL', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-trpl-kplr', from: 'TRPL', to: 'KPLR', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kplr-kgmr', from: 'KPLR', to: 'KGMR', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kgmr-ngrt', from: 'KGMR', to: 'NGRT', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ngrt-cmmg', from: 'NGRT', to: 'CMMG', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-cmmg-plmx', from: 'CMMG', to: 'PLMX', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-plmx-bjpl', from: 'PLMX', to: 'BJPL', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bjpl-jdnx', from: 'BJPL', to: 'JDNX', distanceKm: 22, lineType: 'BOTH', status: 'clear' },
+
+  // Punjab Corridors
+  { id: 'e-bhrl-srm', from: 'BHRL', to: 'SRM', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-srm-jk', from: 'SRM', to: 'JK', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jk-pmq', from: 'JK', to: 'PMQ', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pmq-dnn', from: 'PMQ', to: 'DNN', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dnn-gsp', from: 'DNN', to: 'GSP', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-gsp-bat', from: 'GSP', to: 'BAT', distanceKm: 36, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bat-dbnk', from: 'BAT', to: 'DBNK', distanceKm: 32, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bat-vka', from: 'BAT', to: 'VKA', distanceKm: 31, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-vka-asr', from: 'VKA', to: 'ASR', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-asr-att', from: 'ASR', to: 'ATARI', distanceKm: 25, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-asr-bgtn', from: 'ASR', to: 'BGTN', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bgtn-tna', from: 'BGTN', to: 'TNA', distanceKm: 20, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-tna-kemk', from: 'TNA', to: 'KEMK', distanceKm: 48, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-asr-beas', from: 'ASR', to: 'BEAS', distanceKm: 42, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-beas-juc', from: 'BEAS', to: 'JUC', distanceKm: 36, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-juc-hsx', from: 'JUC', to: 'HSX', distanceKm: 43, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-juc-jrc', from: 'JUC', to: 'JRC', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jrc-pgw', from: 'JRC', to: 'PGW', distanceKm: 16, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pgw-phr', from: 'PGW', to: 'PHR', distanceKm: 22, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-phr-ldh', from: 'PHR', to: 'LDH', distanceKm: 13, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-phr-nss', from: 'PHR', to: 'NSS', distanceKm: 30, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nss-rhu', from: 'NSS', to: 'RHU', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-juc-nkd', from: 'JUC', to: 'NKD', distanceKm: 32, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nkd-lnk', from: 'NKD', to: 'LNK', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lnk-sqr', from: 'LNK', to: 'SQR', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lnk-fzr', from: 'LNK', to: 'FZR', distanceKm: 65, lineType: 'UP', status: 'conflict', blockId: 'BLK-NR-410', dept: 'S&T' },
+  { id: 'e-fzr-fzp', from: 'FZR', to: 'FZP', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-fzp-fdk', from: 'FZP', to: 'FDK', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-fdk-kkp', from: 'FDK', to: 'KKP', distanceKm: 13, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kkp-mks', from: 'KKP', to: 'MKS', distanceKm: 26, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mks-fka', from: 'MKS', to: 'FKA', distanceKm: 42, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-fka-abs', from: 'FKA', to: 'ABS', distanceKm: 32, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kkp-bti', from: 'KKP', to: 'BTI', distanceKm: 43, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bti-abs', from: 'BTI', to: 'ABS', distanceKm: 76, lineType: 'BOTH', status: 'clear' },
+
+  // Trunk Line Ambala - Kalka / Delhi
+  { id: 'e-ldh-knn', from: 'LDH', to: 'KNN', distanceKm: 43, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-knn-sir', from: 'KNN', to: 'SIR', distanceKm: 17, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sir-nmda', from: 'SIR', to: 'NMDA', distanceKm: 24, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nmda-rpar', from: 'NMDA', to: 'RPAR', distanceKm: 16, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rpar-ansb', from: 'RPAR', to: 'ANSB', distanceKm: 35, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ansb-nngl', from: 'ANSB', to: 'NNGL', distanceKm: 16, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nngl-dlpc', from: 'NNGL', to: 'DLPC', distanceKm: 42, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sir-rpj', from: 'SIR', to: 'RPJ', distanceKm: 25, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rpj-cdg', from: 'RPJ', to: 'CDG', distanceKm: 38, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-cdg-klk', from: 'CDG', to: 'KLK', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-klk-sol', from: 'KLK', to: 'SOL', distanceKm: 39, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sol-sml', from: 'SOL', to: 'SML', distanceKm: 56, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rpj-pta', from: 'RPJ', to: 'PTA', distanceKm: 27, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pta-dui', from: 'PTA', to: 'DUI', distanceKm: 53, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dui-sag', from: 'DUI', to: 'SAG', distanceKm: 16, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-sag-jhl', from: 'SAG', to: 'JHL', distanceKm: 51, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jhl-jind', from: 'JHL', to: 'JIND', distanceKm: 72, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jind-rok', from: 'JIND', to: 'ROK', distanceKm: 57, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rok-dli', from: 'ROK', to: 'DLI', distanceKm: 70, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rpj-ubc', from: 'RPJ', to: 'UBC', distanceKm: 20, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ubc-umb', from: 'UBC', to: 'UMB', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-cdg-umb', from: 'CDG', to: 'UMB', distanceKm: 45, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-umb-kkde', from: 'UMB', to: 'KKDE', distanceKm: 42, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kkde-pnp', from: 'KKDE', to: 'PNP', distanceKm: 67, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pnp-snp', from: 'PNP', to: 'SNP', distanceKm: 44, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-snp-dli', from: 'SNP', to: 'DLI', distanceKm: 44, lineType: 'BOTH', status: 'clear' },
+
+  // Saharanpur, Meerut & Moradabad
+  { id: 'e-umb-yjud', from: 'UMB', to: 'YJUD', distanceKm: 51, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-yjud-sre', from: 'YJUD', to: 'SRE', distanceKm: 30, lineType: 'BOTH', status: 'maintenance-done', dept: 'Civil' },
+  { id: 'e-sre-tpz', from: 'SRE', to: 'TPZ', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-tpz-dbd', from: 'TPZ', to: 'DBD', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dbd-mzn', from: 'DBD', to: 'MZN', distanceKm: 24, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mzn-mut', from: 'MZN', to: 'MUT', distanceKm: 52, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mut-mtc', from: 'MUT', to: 'MTC', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-mtc-gzb', from: 'MTC', to: 'GZB', distanceKm: 47, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-tpz-rk', from: 'TPZ', to: 'RK', distanceKm: 35, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rk-lrj', from: 'RK', to: 'LRJ', distanceKm: 19, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lrj-hw', from: 'LRJ', to: 'HW', distanceKm: 27, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-hw-rwl', from: 'HW', to: 'RWL', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rwl-ddn', from: 'RWL', to: 'DDN', distanceKm: 41, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rwl-ynrk', from: 'RWL', to: 'YNRK', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lrj-nbd', from: 'LRJ', to: 'NBD', distanceKm: 42, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nbd-ktw', from: 'NBD', to: 'KTW', distanceKm: 24, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-nbd-ngg', from: 'NBD', to: 'NGG', distanceKm: 22, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ngg-dpr', from: 'NGG', to: 'DPR', distanceKm: 17, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dpr-seo', from: 'DPR', to: 'SEO', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-seo-knt', from: 'SEO', to: 'KNT', distanceKm: 16, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-knt-mb', from: 'KNT', to: 'MB', distanceKm: 29, lineType: 'BOTH', status: 'clear' },
+
+  // Delhi Core Connections
+  { id: 'e-dli-ndls', from: 'DLI', to: 'NDLS', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ndls-hnzm', from: 'NDLS', to: 'HNZM', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ndls-dec', from: 'NDLS', to: 'DEC', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dec-ggn', from: 'DEC', to: 'GGN', distanceKm: 17, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ggn-ghh', from: 'GGN', to: 'GHH', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ghh-re', from: 'GHH', to: 'RE', distanceKm: 43, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-dli-gzb', from: 'DLI', to: 'GZB', distanceKm: 20, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-gzb-hpu', from: 'GZB', to: 'HPU', distanceKm: 37, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-hpu-gms', from: 'HPU', to: 'GMS', distanceKm: 31, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-gms-gjl', from: 'GMS', to: 'GJL', distanceKm: 21, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-gjl-mb', from: 'GJL', to: 'MB', distanceKm: 53, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-402', dept: 'OHE' },
+
+  // Moradabad to Lucknow Segment
+  { id: 'e-mb-kgb', from: 'MB', to: 'KGB', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kgb-rjk', from: 'KGB', to: 'RJK', distanceKm: 21, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rjk-ch', from: 'RJK', to: 'CH', distanceKm: 27, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-kgb-rmu', from: 'KGB', to: 'RMU', distanceKm: 24, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rmu-be', from: 'RMU', to: 'BE', distanceKm: 63, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ch-be', from: 'CH', to: 'BE', distanceKm: 67, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-be-bryc', from: 'BE', to: 'BRYC', distanceKm: 5, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bryc-pmr', from: 'BRYC', to: 'PMR', distanceKm: 15, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pmr-tlh', from: 'PMR', to: 'TLH', distanceKm: 33, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-tlh-spn', from: 'TLH', to: 'SPN', distanceKm: 23, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-spn-roza', from: 'SPN', to: 'ROZA', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-roza-aji', from: 'ROZA', to: 'AJI', distanceKm: 22, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-aji-hri', from: 'AJI', to: 'HRI', distanceKm: 39, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-hri-blm', from: 'HRI', to: 'BLM', distanceKm: 38, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-blm-spc', from: 'BLM', to: 'SPC', distanceKm: 67, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-blm-san', from: 'BLM', to: 'SAN', distanceKm: 21, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-san-lko', from: 'SAN', to: 'LKO', distanceKm: 48, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lko-bbk', from: 'LKO', to: 'BBK', distanceKm: 29, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-bbk-ayc', from: 'BBK', to: 'AYC', distanceKm: 99, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ayc-ay', from: 'AYC', to: 'AY', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-ay-abp', from: 'AY', to: 'ABP', distanceKm: 55, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lko-rbl', from: 'LKO', to: 'RBL', distanceKm: 78, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-rbl-ucr', from: 'RBL', to: 'UCR', distanceKm: 38, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-lko-sln', from: 'LKO', to: 'SLN', distanceKm: 140, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-415', dept: 'Civil' },
+  { id: 'e-sln-pbh', from: 'SLN', to: 'PBH', distanceKm: 40, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-pbh-jnu', from: 'PBH', to: 'JNU', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
+  { id: 'e-jnu-zbd', from: 'JNU', to: 'ZBD', distanceKm: 6, lineType: 'BOTH', status: 'clear' }
 ];
 
 export default function NetworkGraphClient() {
@@ -550,6 +447,9 @@ export default function NetworkGraphClient() {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const MAP_WIDTH = 9934;
+  const MAP_HEIGHT = 7017;
+
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
@@ -560,8 +460,8 @@ export default function NetworkGraphClient() {
   };
   const handleMouseUp = () => setIsDragging(false);
 
-  const handleZoomIn = () => setScale(prev => Math.min(prev + 0.2, 5));
-  const handleZoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.5));
+  const handleZoomIn = () => setScale(prev => Math.min(prev + 0.25, 6));
+  const handleZoomOut = () => setScale(prev => Math.max(prev - 0.25, 0.4));
   const handleReset = () => { setScale(1); setPosition({ x: 0, y: 0 }); };
 
   const filteredStations = useMemo(() => {
@@ -585,8 +485,9 @@ export default function NetworkGraphClient() {
   };
 
   return (
-    <div className="relative w-full h-[85vh] bg-slate-950 text-slate-100 rounded-xl overflow-hidden border border-slate-800 flex flex-col shadow-2xl">
-
+    <div className="relative w-full h-[85vh] bg-slate-950 text-slate-100 rounded-xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
+      
+      {/* Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900/90 border-b border-slate-800 z-10 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-red-600/20 text-red-400 rounded-lg border border-red-500/30">
@@ -594,7 +495,7 @@ export default function NetworkGraphClient() {
           </div>
           <div>
             <h2 className="font-bold text-sm tracking-wide">NORTHERN RAILWAY LIVE TOPOLOGY</h2>
-            <p className="text-xs text-slate-400">{stations.length} stations • SIH 2026 Real-Time Track & Block Monitor</p>
+            <p className="text-xs text-slate-400">{filteredStations.length} of {stations.length} Station Nodes • Full Map Grid</p>
           </div>
         </div>
 
@@ -603,10 +504,10 @@ export default function NetworkGraphClient() {
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
-              placeholder="Search Station (e.g. NDLS)..."
+              placeholder="Search station or code (e.g. SRE, SVDK)..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-slate-950 border border-slate-700 text-xs rounded-lg pl-9 pr-4 py-2 focus:outline-none focus:border-red-500 w-48"
+              className="bg-slate-950 border border-slate-700 text-xs rounded-lg pl-9 pr-4 py-2 focus:outline-none focus:border-red-500 w-56"
             />
           </div>
 
@@ -623,17 +524,16 @@ export default function NetworkGraphClient() {
               <option value="Firozpur">Firozpur</option>
               <option value="Lucknow">Lucknow</option>
               <option value="Moradabad">Moradabad</option>
-              <option value="Unclassified">Unclassified</option>
             </select>
           </div>
 
           <button
             onClick={() => setShowAllStations(prev => !prev)}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition ${showAllStations
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition ${
+              showAllStations
                 ? 'bg-red-600/20 border-red-500/40 text-red-300'
                 : 'bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800'
-              }`}
-            title="Toggle all ~430 auto-detected stations vs 37 verified junctions only"
+            }`}
           >
             <Layers className="w-3.5 h-3.5" />
             {showAllStations ? 'All Stations' : 'Major Junctions Only'}
@@ -653,30 +553,35 @@ export default function NetworkGraphClient() {
         </div>
       </div>
 
+      {/* Main Pan/Zoom Interactive Map Surface */}
       <div
         ref={containerRef}
-        className="relative flex-1 overflow-hidden cursor-grab active:cursor-grabbing bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]"
+        className="relative flex-1 overflow-hidden cursor-grab active:cursor-grabbing bg-slate-950 flex items-center justify-center select-none"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
       >
         <div
-          className="absolute inset-0 transition-transform duration-75 ease-out origin-center"
-          style={{ transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` }}
+          className="relative transition-transform duration-75 ease-out origin-center flex-shrink-0"
+          style={{
+            width: '2000px',
+            aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}`,
+            transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`
+          }}
         >
-          {/* Real Northern Railway System Map as background reference layer.
-              Place the map image at: public/nr-system-map.png
-              Station x/y percentages below were computed from THIS SAME
-              image's pixel dimensions, so markers should align reasonably
-              well with the underlying map (verified junctions especially). */}
+          {/* Base System Map */}
           <img
             src="/nr-system-map.png"
             alt="Northern Railway System Map"
-            className="absolute inset-0 w-full h-full min-h-[900px] min-w-[1400px] object-contain pointer-events-none select-none"
-            draggable={false}
+            className="w-full h-full object-fill block pointer-events-none"
           />
 
-          <svg className="w-full h-full min-h-[900px] min-w-[1400px] absolute inset-0 pointer-events-none opacity-90">
+          {/* SVG Micro-line Tracks */}
+          <svg 
+            viewBox="0 0 100 100" 
+            preserveAspectRatio="none"
+            className="absolute inset-0 w-full h-full pointer-events-none"
+          >
             {edges.map(edge => {
               const fromSt = stations.find(s => s.id === edge.from);
               const toSt = stations.find(s => s.id === edge.to);
@@ -684,48 +589,61 @@ export default function NetworkGraphClient() {
               const fromVisible = filteredStations.some(s => s.id === fromSt.id);
               const toVisible = filteredStations.some(s => s.id === toSt.id);
               if (!fromVisible || !toVisible) return null;
+
               return (
                 <line
                   key={edge.id}
-                  x1={`${fromSt.x}%`} y1={`${fromSt.y}%`}
-                  x2={`${toSt.x}%`} y2={`${toSt.y}%`}
+                  x1={`${fromSt.x}`}
+                  y1={`${fromSt.y}`}
+                  x2={`${toSt.x}`}
+                  y2={`${toSt.y}`}
                   stroke={getEdgeColor(edge.status)}
-                  strokeWidth="3"
-                  strokeDasharray={edge.status === 'block-active' ? '6 4' : 'none'}
-                  className="transition-all"
+                  strokeWidth="0.14"
+                  vectorEffect="non-scaling-stroke"
+                  strokeDasharray={edge.status === 'block-active' ? '2.5 1.5' : 'none'}
                 />
               );
             })}
           </svg>
 
-          {filteredStations.map(station => (
-            <div
-              key={station.id}
-              onClick={(e) => { e.stopPropagation(); setSelectedStation(station); }}
-              className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group pointer-events-auto"
-              style={{ left: `${station.x}%`, top: `${station.y}%` }}
-            >
-              <div className={`relative flex items-center justify-center rounded-full border-2 transition-all duration-200 ${station.verified ? 'w-6 h-6' : 'w-3 h-3'
+          {/* Calibrated Small Node Markers */}
+          <div className="absolute inset-0 pointer-events-none">
+            {filteredStations.map(station => (
+              <div
+                key={station.id}
+                onClick={(e) => { e.stopPropagation(); setSelectedStation(station); }}
+                className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group pointer-events-auto"
+                style={{ left: `${station.x}%`, top: `${station.y}%` }}
+              >
+                {/* Station Node Dot */}
+                <div className={`relative flex items-center justify-center rounded-full border transition-transform duration-150 ${
+                  station.verified ? 'w-1.5 h-1.5 border-black/90' : 'w-1 h-1 border-slate-700'
                 } ${(station.activeBlocks ?? 0) > 0
-                  ? 'bg-red-500 border-white shadow-[0_0_12px_rgba(239,68,68,0.8)] animate-pulse'
+                  ? 'bg-red-500 border-white shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse scale-125'
                   : station.verified
-                    ? 'bg-slate-900 border-red-500 group-hover:scale-125 group-hover:bg-red-600'
-                    : 'bg-slate-700 border-slate-400 group-hover:scale-150 group-hover:bg-amber-500'
+                    ? 'bg-amber-400 group-hover:scale-150 group-hover:bg-amber-300'
+                    : 'bg-slate-400 group-hover:scale-125'
                 }`}>
-                {station.verified && <span className="w-2 h-2 rounded-full bg-white"></span>}
-              </div>
-              {station.verified && (
-                <div className="absolute top-7 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-slate-700 px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap shadow-md">
-                  {station.code}
+                  {station.verified && (
+                    <span className="w-0.5 h-0.5 rounded-full bg-black/80"></span>
+                  )}
                 </div>
-              )}
-            </div>
-          ))}
+
+                {/* Station Micro Label */}
+                {station.verified && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-slate-950/85 border border-slate-700/80 px-0.5 py-[0.5px] rounded text-[6px] font-mono font-bold text-slate-200 whitespace-nowrap shadow pointer-events-none group-hover:z-30 group-hover:bg-slate-900">
+                    {station.code}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
+      {/* Pop-up Info Window */}
       {selectedStation && (
-        <div className="absolute right-4 bottom-4 w-80 bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl z-20 backdrop-blur-md animate-in fade-in slide-in-from-right-5">
+        <div className="absolute right-4 bottom-14 w-80 bg-slate-900/95 border border-slate-700 rounded-xl p-4 shadow-2xl z-20 backdrop-blur-md animate-in fade-in slide-in-from-right-4">
           <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
             <div className="flex items-center gap-2">
               <MapPin className="w-4 h-4 text-red-500" />
@@ -736,27 +654,31 @@ export default function NetworkGraphClient() {
             </button>
           </div>
 
-          <div className="space-y-2.5 text-xs">
+          <div className="space-y-2 text-xs">
             <div className="flex justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
               <span className="text-slate-400">Division:</span>
               <span className="font-medium text-slate-200">{selectedStation.division}</span>
             </div>
             <div className="flex justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-              <span className="text-slate-400">Data Source:</span>
+              <span className="text-slate-400">Map Coordinates:</span>
+              <span className="font-mono text-slate-300">x: {selectedStation.x}%, y: {selectedStation.y}%</span>
+            </div>
+            <div className="flex justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
+              <span className="text-slate-400">Classification:</span>
               <span className={`font-medium uppercase ${selectedStation.verified ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {selectedStation.verified ? 'Verified Junction' : 'Auto-detected (OCR)'}
+                {selectedStation.verified ? 'Major Junction' : 'Intermediate Waypoint'}
               </span>
             </div>
             {selectedStation.verified && (
               <>
                 <div className="flex justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-                  <span className="text-slate-400">Active Blocks / Failures:</span>
+                  <span className="text-slate-400">Active Blocks:</span>
                   <span className={`font-bold ${(selectedStation.activeBlocks ?? 0) > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                     {selectedStation.activeBlocks ?? 0} Block(s)
                   </span>
                 </div>
                 <div className="flex justify-between bg-slate-950 p-2 rounded-lg border border-slate-800">
-                  <span className="text-slate-400">Scheduled Daily Trains:</span>
+                  <span className="text-slate-400">Daily Trains:</span>
                   <span className="font-medium text-slate-200">{selectedStation.scheduledTrains ?? '—'}</span>
                 </div>
               </>
@@ -765,8 +687,8 @@ export default function NetworkGraphClient() {
 
           {selectedStation.verified && (
             <button
-              onClick={() => alert(`Fetching live signal telemetry and interlocking status for ${selectedStation.name}...`)}
-              className="w-full mt-4 bg-red-600 hover:bg-red-700 text-white font-medium text-xs py-2 rounded-lg transition shadow-lg shadow-red-600/20"
+              onClick={() => alert(`Fetching live telemetry and interlocking status for ${selectedStation.name}...`)}
+              className="w-full mt-3 bg-red-600 hover:bg-red-700 text-white font-medium text-xs py-2 rounded-lg transition shadow-lg shadow-red-600/20"
             >
               Request Section Clear / Inspect Telemetry
             </button>
@@ -774,16 +696,17 @@ export default function NetworkGraphClient() {
         </div>
       )}
 
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400">
+      {/* Legend Footer */}
+      <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400 z-10">
         <div className="flex items-center gap-4 flex-wrap">
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Clear Line</span>
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> Block Active</span>
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Conflict Warning</span>
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Maintenance Done</span>
-          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-700 border border-slate-400"></span> Wayside (auto-detected)</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Clear Line</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500"></span> Block Active</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500"></span> Conflict Warning</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500"></span> Maintenance Done</span>
         </div>
-        <div>Drag to Pan • Scroll/Buttons to Zoom • Click Station for Details</div>
+        <div>Drag to Pan • Zoom in to inspect intermediate track waypoints</div>
       </div>
+
     </div>
   );
 }

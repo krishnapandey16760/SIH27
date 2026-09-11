@@ -5,6 +5,7 @@ import GanttChartSection from './components/GanttChartSection';
 import OptimizationPanel from './components/OptimizationPanel';
 import ActivityFeed from './components/ActivityFeed';
 import DashboardHeader from './components/DashboardHeader';
+import LiveTrainTracker from './components/LiveTrainTracker';
 import { DashboardProvider } from '@/context/DashboardContext';
 
 // Backend integration: fetch today's block schedule, train movements, and optimization status from /api/block-planning/today
@@ -20,6 +21,7 @@ export default function BlockPlanningDashboard() {
               <GanttChartSection />
             </div>
             <div className="xl:col-span-1 space-y-4">
+              <LiveTrainTracker />
               <OptimizationPanel />
               <ActivityFeed />
             </div>
