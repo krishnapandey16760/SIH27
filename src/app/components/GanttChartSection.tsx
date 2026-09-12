@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import { Filter, ZoomIn, ZoomOut, Info, Download } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Filter, ZoomIn, ZoomOut, Info, Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDashboard, TimeRange } from '@/context/DashboardContext';
 import { generateGantt, exportGanttCSV, totalUnitsFor, SegmentRow } from '@/lib/dashboardData';
+import { buildRealGanttRows } from '@/lib/realGanttData';
+import type { SolverEngine } from '@/lib/solverClient';
 
 const ROW_H = 36;
 
@@ -16,8 +18,6 @@ const BAR_COLORS = {
 
 const DEPT_FILTERS = ['All', 'Civil', 'OHE', 'S&T'] as const;
 const LINE_FILTERS = ['All', 'UP', 'DOWN'] as const;
-
-// Maps the UI label (S&T) to the code used inside generated block labels (ST-xxx)
 const DEPT_CODE: Record<string, string> = { Civil: 'Civil', OHE: 'OHE', 'S&T': 'ST' };
 
 function getAxisLabels(timeRange: TimeRange): string[] {
@@ -27,7 +27,6 @@ function getAxisLabels(timeRange: TimeRange): string[] {
   if (timeRange === 'Weekly') {
     return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', ''];
   }
-  // Monthly: show a tick every 5 "days" to avoid clutter
   return Array.from({ length: 31 }, (_, i) => (i % 5 === 0 ? `D${i + 1}` : ''));
 }
 
@@ -38,7 +37,36 @@ export default function GanttChartSection() {
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [zoom, setZoom] = useState(1);
 
-  const allRows: SegmentRow[] = useMemo(() => generateGantt(seed, timeRange), [seed, timeRange]);
+  const [realRows, setRealRows] = useState<SegmentRow[] | null>(null);
+  const [realEngine, setRealEngine] = useState<SolverEngine | null>(null);
+  const [loadingReal, setLoadingReal] = useState(false);
+
+  const isDaily = timeRange === 'Daily';
+
+  // Daily view: pull real train + solver data. Weekly/Monthly: keep the
+  // illustrative seeded generator (full multi-day real data plumbing is a
+  // bigger lift — flagged clearly in the UI below, not silently faked).
+  useEffect(() => {
+    if (!isDaily) return;
+    let cancelled = false;
+    setLoadingReal(true);
+    buildRealGanttRows().then((result) => {
+      if (cancelled) return;
+      setRealRows(result.rows);
+      setRealEngine(result.engine);
+      setLoadingReal(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDaily, seed]);
+
+  const syntheticRows: SegmentRow[] = useMemo(
+    () => (isDaily ? [] : generateGantt(seed, timeRange)),
+    [isDaily, seed, timeRange]
+  );
+
+  const allRows = isDaily ? realRows ?? [] : syntheticRows;
   const totalUnits = totalUnitsFor(timeRange);
   const axisLabels = getAxisLabels(timeRange);
 
@@ -56,7 +84,6 @@ export default function GanttChartSection() {
 
   const minutesToPct = (min: number) => (min / totalUnits) * 100;
 
-  // Only show a "now" marker when viewing Daily range for the actual current day
   const isToday = selectedDate.toDateString() === now.toDateString();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const showNowMarker = timeRange === 'Daily' && isToday;
@@ -80,14 +107,42 @@ export default function GanttChartSection() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-wrap gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Block Schedule — Gantt View</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-foreground">Block Schedule — Gantt View</h2>
+            {isDaily ? (
+              loadingReal ? (
+                <span className="status-badge bg-muted text-muted-foreground">
+                  <Loader2 size={10} className="animate-spin" />
+                  Solving…
+                </span>
+              ) : (
+                <span
+                  className={`status-badge ${
+                    realEngine === 'local-fallback' ? 'bg-warning/15 text-warning' : 'bg-positive-tint text-positive'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {realEngine === 'python-milp-ga'
+                    ? 'Live: OR-Tools + GA'
+                    : realEngine === 'python-milp'
+                    ? 'Live: OR-Tools CP-SAT'
+                    : realEngine === 'local-fallback'
+                    ? 'Local fallback'
+                    : ''}
+                </span>
+              )
+            ) : (
+              <span className="status-badge bg-muted text-muted-foreground" title="Full multi-day real data pending">
+                Illustrative
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             {selectedDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ·{' '}
             {timeRange} view · Northern Railways · {visibleRows.length} track segments
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Legend */}
           <div className="flex items-center gap-3 mr-2">
             {[
               { cls: 'gantt-train-bar', label: 'Train' },
@@ -101,7 +156,6 @@ export default function GanttChartSection() {
             ))}
           </div>
 
-          {/* Line filter */}
           {LINE_FILTERS.map((lf) => (
             <button
               key={`lf-${lf}`}
@@ -116,7 +170,6 @@ export default function GanttChartSection() {
             </button>
           ))}
 
-          {/* Dept filter */}
           <div className="flex items-center gap-1 border-l border-border pl-2">
             <Filter size={12} className="text-muted-foreground" />
             {DEPT_FILTERS.map((df) => (
@@ -134,7 +187,6 @@ export default function GanttChartSection() {
             ))}
           </div>
 
-          {/* Zoom */}
           <div className="flex items-center gap-1 border-l border-border pl-2">
             <button className="btn-ghost p-1" onClick={() => setZoom((z) => Math.min(z + 0.25, 2))} title="Zoom in">
               <ZoomIn size={14} />
@@ -145,7 +197,6 @@ export default function GanttChartSection() {
             </button>
           </div>
 
-          {/* Export */}
           <button className="btn-ghost text-xs border-l border-border pl-2 ml-1" onClick={handleExport}>
             <Download size={13} />
             Export
@@ -156,7 +207,6 @@ export default function GanttChartSection() {
       {/* Chart area */}
       <div className="overflow-x-auto scrollbar-thin">
         <div style={{ minWidth: 900 * zoom }}>
-          {/* Time axis header */}
           <div className="flex border-b border-border" style={{ paddingLeft: 140 }}>
             {axisLabels.map((label, i) => (
               <div
@@ -169,9 +219,7 @@ export default function GanttChartSection() {
             ))}
           </div>
 
-          {/* Rows */}
           <div className="relative">
-            {/* Grid lines */}
             <div className="absolute inset-0 pointer-events-none" style={{ paddingLeft: 140 }}>
               {axisLabels.slice(1).map((_, i) => (
                 <div
@@ -189,7 +237,12 @@ export default function GanttChartSection() {
               )}
             </div>
 
-            {visibleRows.length === 0 ? (
+            {isDaily && loadingReal ? (
+              <div className="px-6 py-10 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                Solving today's schedule against real train movements…
+              </div>
+            ) : visibleRows.length === 0 ? (
               <div className="px-6 py-10 text-center text-sm text-muted-foreground">
                 No segments match the selected filters.
               </div>
@@ -235,7 +288,6 @@ export default function GanttChartSection() {
         </div>
       </div>
 
-      {/* Footer info */}
       <div className="px-4 py-2 border-t border-border flex items-center gap-2">
         <Info size={12} className="text-muted-foreground" />
         <span className="text-xs text-muted-foreground">
@@ -249,10 +301,10 @@ export default function GanttChartSection() {
             </>
           )}
           Orange bars = maintenance blocks · Blue bars = train movements · Red bars = conflicts
+          {!isDaily && ' · Weekly/Monthly views are illustrative pending full real-data integration'}
         </span>
       </div>
 
-      {/* Floating tooltip */}
       {tooltip && (
         <div
           className="fixed z-50 px-3 py-2 card-surface-elevated text-xs text-foreground shadow-lg pointer-events-none max-w-xs"
