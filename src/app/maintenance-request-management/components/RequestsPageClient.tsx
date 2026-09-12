@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Download, Plus, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, CheckSquare, Square, CheckCircle, XCircle, Play, Eye, Edit3, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 import StatusBadge from '@/components/ui/statusbadge';
 import PriorityBadge from '@/components/ui/prioritybadge';
 import DeptBadge from '@/components/ui/deptbadge';
@@ -43,6 +44,7 @@ type SortKey = keyof MaintenanceRequest;
 const ITEMS_PER_PAGE_OPTIONS = [10, 15, 25, 50];
 
 export default function RequestsPageClient() {
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('All');
   const [priorityFilter, setPriorityFilter] = useState<string>('All');
@@ -155,7 +157,7 @@ export default function RequestsPageClient() {
             <span className="font-semibold">{CONFLICTS} maintenance blocks</span> have train conflicts.
             Review and resolve before the next operating window.
           </p>
-          <button className="btn-ghost text-xs text-negative ml-auto" onClick={() => setStatusFilter('Conflict')}>
+          <button className="btn-ghost text-xs text-negative ml-auto" onClick={() => router.push('/conflict-alerts')}>
             View Conflicts
           </button>
         </div>
