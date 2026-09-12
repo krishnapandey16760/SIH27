@@ -56,7 +56,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     id: 'nav-activity',
     label: 'Activity Log',
-    href: '#',
+    href: '/activity-log',
     icon: <Activity size={18} />,
     group: 'Monitoring',
   },
