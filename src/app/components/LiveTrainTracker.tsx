@@ -1,15 +1,18 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import { Train, RotateCcw, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Train, RotateCcw, AlertTriangle, CheckCircle, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { solveSchedule, formatMin, type ScheduledBlock } from '@/lib/solver';
+import { formatMin, type ScheduledBlock } from '@/lib/solver';
 import { BASE_TRAINS, BASE_REQUESTS } from '@/lib/liveTrainData';
+import { solveScheduleRemote } from '@/lib/solverClient';
 
 export default function LiveTrainTracker() {
-  // delayMinutes per train, keyed by trainNumber. 0 = on time.
   const [delays, setDelays] = useState<Record<string, number>>({});
   const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [results, setResults] = useState<ScheduledBlock[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [usedFallback, setUsedFallback] = useState(false);
 
   const effectiveTrains = useMemo(
     () =>
@@ -20,14 +23,24 @@ export default function LiveTrainTracker() {
     [delays]
   );
 
-  const results: ScheduledBlock[] = useMemo(
-    () => solveSchedule(effectiveTrains, BASE_REQUESTS),
-    [effectiveTrains]
-  );
+  // Re-solve via the real backend whenever delays change.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    solveScheduleRemote(effectiveTrains, BASE_REQUESTS, false).then((res) => {
+      if (cancelled) return;
+      setResults(res.blocks);
+      setUsedFallback(res.engine === 'local-fallback');
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveTrains]);
 
   const resultFor = (requestId: string) => results.find((r) => r.requestId === requestId);
 
-  const applyDelay = (trainNumber: string, trainName: string, requestId: string) => {
+  const applyDelay = async (trainNumber: string, trainName: string, requestId: string) => {
     const raw = inputs[trainNumber];
     const mins = parseInt(raw, 10);
     if (isNaN(mins) || mins < 0) {
@@ -36,21 +49,21 @@ export default function LiveTrainTracker() {
     }
 
     const before = resultFor(requestId);
-    setDelays((prev) => ({ ...prev, [trainNumber]: mins }));
-
-    // Compute what the new result WILL be, to describe the change in the toast.
     const newTrains = BASE_TRAINS.map((t) =>
       t.trainNumber === trainNumber ? { ...t, startMin: t.startMin + mins, endMin: t.endMin + mins } : t
     );
-    const after = solveSchedule(newTrains, BASE_REQUESTS).find((r) => r.requestId === requestId);
+    const { blocks: after, engine } = await solveScheduleRemote(newTrains, BASE_REQUESTS, false);
+    const afterBlock = after.find((r) => r.requestId === requestId);
 
-    if (after?.status === 'Conflict') {
+    setDelays((prev) => ({ ...prev, [trainNumber]: mins }));
+
+    if (afterBlock?.status === 'Conflict') {
       toast.error(`${trainName} delayed ${mins} min — ${requestId} could not be rescheduled`, {
-        description: after.reason,
+        description: `${afterBlock.reason} (engine: ${engine})`,
       });
-    } else if (before && after && before.startMin !== after.startMin) {
+    } else if (before && afterBlock && before.startMin !== afterBlock.startMin) {
       toast.success(`${trainName} delayed ${mins} min — ${requestId} auto-rescheduled`, {
-        description: `${formatMin(before.startMin)}–${formatMin(before.endMin)} → ${formatMin(after.startMin)}–${formatMin(after.endMin)}`,
+        description: `${formatMin(before.startMin)}–${formatMin(before.endMin)} → ${formatMin(afterBlock.startMin)}–${formatMin(afterBlock.endMin)} (${engine})`,
       });
     } else {
       toast.info(`${trainName} delayed ${mins} min — no conflict, ${requestId} unaffected`);
@@ -70,7 +83,11 @@ export default function LiveTrainTracker() {
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <Train size={14} className="text-primary" />
-          <span className="text-sm font-semibold text-foreground">Live Train Tracker (Demo)</span>
+          <span className="text-sm font-semibold text-foreground">Live Train Tracker</span>
+          {loading && <Loader2 size={12} className="animate-spin text-muted-foreground" />}
+          {usedFallback && !loading && (
+            <span className="text-2xs text-warning">(local fallback — start Python backend)</span>
+          )}
         </div>
         <button className="btn-ghost text-xs" onClick={resetAll}>
           <RotateCcw size={12} />
@@ -87,21 +104,19 @@ export default function LiveTrainTracker() {
 
           return (
             <div key={train.trainNumber} className="px-4 py-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-foreground">
-                    {train.trainNumber} · {train.trainName}
-                  </p>
-                  <p className="text-2xs text-muted-foreground mt-0.5">
-                    {train.segmentId} ({train.lineType}) · Normal: {formatMin(train.startMin)}–{formatMin(train.endMin)}
-                    {delay > 0 && (
-                      <span className="text-warning font-medium">
-                        {' '}
-                        → Delayed: {formatMin(train.startMin + delay)}–{formatMin(train.endMin + delay)}
-                      </span>
-                    )}
-                  </p>
-                </div>
+              <div>
+                <p className="text-xs font-semibold text-foreground">
+                  {train.trainNumber} · {train.trainName}
+                </p>
+                <p className="text-2xs text-muted-foreground mt-0.5">
+                  {train.segmentId} ({train.lineType}) · Normal: {formatMin(train.startMin)}–{formatMin(train.endMin)}
+                  {delay > 0 && (
+                    <span className="text-warning font-medium">
+                      {' '}
+                      → Delayed: {formatMin(train.startMin + delay)}–{formatMin(train.endMin + delay)}
+                    </span>
+                  )}
+                </p>
               </div>
 
               <div className="flex items-center gap-2">
