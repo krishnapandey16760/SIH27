@@ -46,14 +46,6 @@ const NAV_ITEMS: NavItem[] = [
     group: 'Visualization',
   },
   {
-    id: 'nav-alerts',
-    label: 'Conflict Alerts',
-    href: '#',
-    icon: <AlertTriangle size={18} />,
-    badge: 3,
-    group: 'Monitoring',
-  },
-  {
     id: 'nav-activity',
     label: 'Activity Log',
     href: '#',
