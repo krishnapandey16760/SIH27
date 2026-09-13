@@ -1,9 +1,9 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
 import { Geist } from 'next/font/google';
-//@ts-ignore
 import '../styles/tailwind.css';
 import { Toaster } from 'sonner';
+import { RoleProvider } from '@/context/RoleContext';
 
 const geist = Geist({
   subsets: ['latin'],
@@ -32,7 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={geist.variable}>
       <body className={geist.className}>
-        {children}
+        <RoleProvider>{children}</RoleProvider>
         <Toaster
           position="bottom-right"
           theme="dark"

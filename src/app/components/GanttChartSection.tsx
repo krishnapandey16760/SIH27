@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useDashboard, TimeRange } from '@/context/DashboardContext';
 import { generateGantt, exportGanttCSV, totalUnitsFor, SegmentRow } from '@/lib/dashboardData';
 import { buildRealGanttRows } from '@/lib/realGanttData';
+import { useMaintenanceRequests } from '@/lib/useMaintenanceRequests';
 import type { SolverEngine } from '@/lib/solverClient';
 
 const ROW_H = 36;
@@ -31,7 +32,9 @@ function getAxisLabels(timeRange: TimeRange): string[] {
 }
 
 export default function GanttChartSection() {
-  const { seed, timeRange, selectedDate, now } = useDashboard();
+  const { seed, timeRange, selectedDate, now, trainDelays } = useDashboard();
+  const { requests } = useMaintenanceRequests();
+
   const [deptFilter, setDeptFilter] = useState<string>('All');
   const [lineFilter, setLineFilter] = useState<string>('All');
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -43,32 +46,74 @@ export default function GanttChartSection() {
 
   const isDaily = timeRange === 'Daily';
 
-  // Daily view: pull real train + solver data. Weekly/Monthly: keep the
-  // illustrative seeded generator (full multi-day real data plumbing is a
-  // bigger lift — flagged clearly in the UI below, not silently faked).
+  // Active aur Completed requests tracking
+  const activeRequests = useMemo(() => {
+    return requests.filter((r) => r.status?.toUpperCase() !== 'COMPLETED');
+  }, [requests]);
+
+  const completedIds = useMemo(() => {
+    return new Set(
+      requests
+        .filter((r) => r.status?.toUpperCase() === 'COMPLETED')
+        .map((r) => String(r.id))
+    );
+  }, [requests]);
+
+  // Daily view: requests pass ho rahi hai taaki dynamic sync ho
   useEffect(() => {
     if (!isDaily) return;
     let cancelled = false;
     setLoadingReal(true);
-    buildRealGanttRows().then((result) => {
+
+    buildRealGanttRows(trainDelays, requests).then((result) => {
       if (cancelled) return;
       setRealRows(result.rows);
       setRealEngine(result.engine);
       setLoadingReal(false);
     });
+
     return () => {
       cancelled = true;
     };
-  }, [isDaily, seed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDaily, seed, JSON.stringify(trainDelays), requests]);
 
   const syntheticRows: SegmentRow[] = useMemo(
     () => (isDaily ? [] : generateGantt(seed, timeRange)),
     [isDaily, seed, timeRange]
   );
 
-  const allRows = isDaily ? realRows ?? [] : syntheticRows;
+  const rawRows = isDaily ? realRows ?? [] : syntheticRows;
   const totalUnits = totalUnitsFor(timeRange);
   const axisLabels = getAxisLabels(timeRange);
+
+  // Filter completed bars strictly from rows
+  const allRows = useMemo(() => {
+    return rawRows.map((row) => {
+      const filteredBars = row.bars.filter((bar) => {
+        if (bar.type !== 'block') return true;
+
+        // Agar saari requests complete hain toh saare maintenance blocks hide honge
+        if (requests.length > 0 && activeRequests.length === 0) {
+          return false;
+        }
+
+        // Specific completed ID match check
+        if (completedIds.has(String(bar.id))) return false;
+
+        const isMarkedCompleted = Array.from(completedIds).some(
+          (id) => bar.label?.includes(id) || bar.tooltip?.includes(id)
+        );
+
+        return !isMarkedCompleted;
+      });
+
+      return {
+        ...row,
+        bars: filteredBars,
+      };
+    });
+  }, [rawRows, completedIds, requests, activeRequests.length]);
 
   const visibleRows = useMemo(() => {
     return allRows.filter((row) => {
@@ -82,7 +127,11 @@ export default function GanttChartSection() {
     });
   }, [allRows, lineFilter, deptFilter]);
 
-  const minutesToPct = (min: number) => (min / totalUnits) * 100;
+  // Safe percentage calculation for accurate timeline coordinate placement
+  const minutesToPct = (min: number) => {
+    const clamped = Math.max(0, Math.min(min, totalUnits));
+    return (clamped / totalUnits) * 100;
+  };
 
   const isToday = selectedDate.toDateString() === now.toDateString();
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -139,7 +188,8 @@ export default function GanttChartSection() {
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             {selectedDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ·{' '}
-            {timeRange} view · Northern Railways · {visibleRows.length} track segments
+            {timeRange} view · Northern Railways · {visibleRows.length} track segments ·{' '}
+            <span className="font-medium text-foreground">{activeRequests.length} active blocks</span>
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -207,16 +257,24 @@ export default function GanttChartSection() {
       {/* Chart area */}
       <div className="overflow-x-auto scrollbar-thin">
         <div style={{ minWidth: 900 * zoom }}>
-          <div className="flex border-b border-border" style={{ paddingLeft: 140 }}>
-            {axisLabels.map((label, i) => (
-              <div
-                key={`axis-${i}`}
-                className="shrink-0 text-2xs text-muted-foreground font-mono-data border-l border-border/40 px-1 pt-1 pb-1"
-                style={{ width: `${(1 / (axisLabels.length - 1)) * 100}%` }}
-              >
-                {label}
-              </div>
-            ))}
+          <div className="relative h-6 border-b border-border" style={{ marginLeft: 140 }}>
+            {axisLabels.map((label, i) => {
+              const pct = (i / (axisLabels.length - 1)) * 100;
+              const isFirst = i === 0;
+              const isLast = i === axisLabels.length - 1;
+              return (
+                <span
+                  key={`axis-${i}`}
+                  className="absolute top-1 text-2xs text-muted-foreground font-mono-data whitespace-nowrap"
+                  style={{
+                    left: `${pct}%`,
+                    transform: isFirst ? 'translateX(0)' : isLast ? 'translateX(-100%)' : 'translateX(-50%)',
+                  }}
+                >
+                  {label}
+                </span>
+              );
+            })}
           </div>
 
           <div className="relative">
@@ -267,12 +325,12 @@ export default function GanttChartSection() {
                   <div className="relative flex-1" style={{ height: ROW_H }}>
                     {row.bars.map((bar) => {
                       const left = minutesToPct(bar.startMin);
-                      const width = minutesToPct(bar.endMin - bar.startMin);
+                      const width = Math.max(minutesToPct(bar.endMin) - left, 1.2);
                       return (
                         <div
                           key={bar.id}
                           className={`absolute top-1/2 -translate-y-1/2 ${BAR_COLORS[bar.type]} flex items-center px-1.5 cursor-pointer transition-opacity hover:opacity-100`}
-                          style={{ left: `${left}%`, width: `${Math.max(width, 1.5)}%`, height: 22 }}
+                          style={{ left: `${left}%`, width: `${width}%`, height: 22 }}
                           onMouseEnter={(e) => setTooltip({ text: bar.tooltip, x: e.clientX, y: e.clientY })}
                           onMouseLeave={() => setTooltip(null)}
                         >

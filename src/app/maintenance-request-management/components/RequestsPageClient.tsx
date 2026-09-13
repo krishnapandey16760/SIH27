@@ -1,50 +1,62 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, Download, Plus, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown, CheckSquare, Square, CheckCircle, XCircle, Play, Eye, Edit3, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  Search,
+  Download,
+  Plus,
+  RefreshCw,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  CheckSquare,
+  Square,
+  CheckCircle,
+  XCircle,
+  Play,
+  Eye,
+  Edit3,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  RotateCcw,
+  CheckCircle2,
+  Clock,
+  Split as SplitIcon
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { useRouter } from 'next/navigation';
 import StatusBadge from '@/components/ui/statusbadge';
 import PriorityBadge from '@/components/ui/prioritybadge';
 import DeptBadge from '@/components/ui/deptbadge';
 import RequestDetailDrawer from './RequestDetailDrawer';
 import NewRequestModal from './NewRequestModal';
+import { useRole } from '@/context/RoleContext';
+import RoleSwitcher from '../../components/RoleSwitcher';
+import { type UIMaintenanceRequest, type Status } from '@/lib/maintenanceRequests';
+import { useMaintenanceRequests } from '@/lib/useMaintenanceRequests';
 
-// ... baaki poora code bilkul same rahega, sirf upar ke 3 import lines change hui hain
-
-// Backend integration: GET /api/maintenance-requests?zone=NR
-type Dept = 'Civil' | 'OHE' | 'S&T';
-type Priority = 'Critical' | 'High' | 'Medium' | 'Low';
-type Status = 'Pending' | 'Scheduled' | 'Active' | 'Completed' | 'Cancelled' | 'Conflict';
-type LineType = 'UP' | 'DOWN' | 'BOTH';
-
-interface MaintenanceRequest {
-  id: string;
-  requestId: string;
-  segment: string;
-  fromStation: string;
-  toStation: string;
-  lineType: LineType;
-  dept: Dept;
-  durationMins: number;
-  preferredStart: string;
-  preferredEnd: string;
-  priority: Priority;
-  requestedBy: string;
-  submittedAt: string;
-  status: Status;
-  assignedBlock?: string;
-  conflictsWith?: string;
-}
-
-import { REQUESTS } from '@/lib/maintenanceRequests'
-
-type SortKey = keyof MaintenanceRequest;
+type SortKey = keyof UIMaintenanceRequest;
 
 const ITEMS_PER_PAGE_OPTIONS = [10, 15, 25, 50];
 
+// NOTE: 'Split' is a new status the MILP solver can now return (a request
+// whose duration got broken across multiple non-overlapping windows instead
+// of one). Ideally this belongs in the shared `Status` union in
+// `@/lib/maintenanceRequests.ts` - see the note at the bottom of this file.
+const ALL_STATUSES: Status[] = ['Pending', 'Scheduled', 'Active', 'Split' as Status, 'Completed', 'Cancelled', 'Conflict'];
+
+const minutesToClock = (mins: number): string => {
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
 export default function RequestsPageClient() {
-  const router = useRouter();
+  const { role } = useRole();
+  const canChangeStatus = role === 'Sr. Divisional Engineer';
+
+  const { requests, addRequest, updateStatus: updateStatusStore, setRequests } = useMaintenanceRequests();
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('All');
   const [priorityFilter, setPriorityFilter] = useState<string>('All');
@@ -54,12 +66,87 @@ export default function RequestsPageClient() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [drawerRequest, setDrawerRequest] = useState<MaintenanceRequest | null>(null);
+  const [drawerRequest, setDrawerRequest] = useState<UIMaintenanceRequest | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
+
+  const updateStatus = (id: string, newStatus: Status) => {
+    updateStatusStore(id, newStatus);
+    const req = requests.find((r) => r.id === id);
+    toast.success(`${req?.requestId ?? id} marked as ${newStatus}`, {
+      description: `Updated by ${role}`,
+    });
+    if (drawerRequest?.id === id) {
+      setDrawerRequest((prev) => (prev ? { ...prev, status: newStatus } : prev));
+    }
+  };
+
+  // --- Admin conflict-resolution actions --------------------------------
+  // These act on the data the MILP solver now attaches to a Conflict result
+  // (adminResolution.suggestedWindows / blockingRequestIds /
+  // recommendDeferToAnotherDay - see milp_solver.py). They're wired here as
+  // optimistic local updates; none of them re-runs the solver yet - see the
+  // note at the bottom of this file for what full wiring would still need.
+
+  const applyWindow = (id: string, window: { startMin: number; endMin: number }) => {
+    const target = requests.find((r) => r.id === id);
+    setRequests(
+      requests.map((r) =>
+        r.id === id
+          ? ({
+              ...r,
+              status: 'Scheduled' as Status,
+              preferredStart: minutesToClock(window.startMin),
+              preferredEnd: minutesToClock(window.endMin),
+              adminResolution: undefined,
+            } as UIMaintenanceRequest)
+          : r
+      )
+    );
+    toast.success(`Applied suggested window to ${target?.requestId ?? id}`, {
+      description: `${minutesToClock(window.startMin)} – ${minutesToClock(window.endMin)}`,
+    });
+    if (drawerRequest?.id === id) {
+      setDrawerRequest((prev) =>
+        prev
+          ? ({
+              ...prev,
+              status: 'Scheduled' as Status,
+              preferredStart: minutesToClock(window.startMin),
+              preferredEnd: minutesToClock(window.endMin),
+            } as UIMaintenanceRequest)
+          : prev
+      );
+    }
+  };
+
+  const bumpRequest = (id: string, blockingRequestId: string) => {
+    const target = requests.find((r) => r.id === id);
+    setRequests(
+      requests.map((r) => (r.id === blockingRequestId ? { ...r, status: 'Pending' as Status } : r))
+    );
+    toast.info(`${blockingRequestId} moved back to Pending to free up space for ${target?.requestId ?? id}`, {
+      description: 'Re-run optimization so both requests get a fresh, valid schedule.',
+    });
+  };
+
+  const deferToAnotherDay = (id: string) => {
+    const target = requests.find((r) => r.id === id);
+    updateStatus(id, 'Pending');
+    toast.info(`${target?.requestId ?? id} marked Pending`, {
+      description: 'Resubmit it for a different day - this segment/line has no room left today.',
+    });
+  };
+
+  const completedRequests = useMemo(() => {
+    return requests.filter((r) => r.status === 'Completed');
+  }, [requests]);
+
+  const activeRequests = useMemo(() => {
+    return requests.filter((r) => r.status !== 'Completed');
+  }, [requests]);
 
   const filtered = useMemo(() => {
-    return REQUESTS.filter((r) => {
+    return activeRequests.filter((r) => {
       const matchSearch =
         !search ||
         r.requestId.toLowerCase().includes(search.toLowerCase()) ||
@@ -70,7 +157,7 @@ export default function RequestsPageClient() {
       const matchStatus = statusFilter === 'All' || r.status === statusFilter;
       return matchSearch && matchDept && matchPriority && matchStatus;
     });
-  }, [search, deptFilter, priorityFilter, statusFilter]);
+  }, [activeRequests, search, deptFilter, priorityFilter, statusFilter]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -81,12 +168,15 @@ export default function RequestsPageClient() {
     });
   }, [filtered, sortKey, sortDir]);
 
-  const totalPages = Math.ceil(sorted.length / itemsPerPage);
+  const totalPages = Math.ceil(sorted.length / itemsPerPage) || 1;
   const paginated = sorted.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(key); setSortDir('asc'); }
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
   };
 
   const toggleRow = (id: string) => {
@@ -103,37 +193,48 @@ export default function RequestsPageClient() {
   };
 
   const handleBulkApprove = () => {
+    setRequests(
+      requests.map((r) => (selectedIds.has(r.id) ? { ...r, status: 'Scheduled' as Status } : r))
+    );
     toast.success(`${selectedIds.size} requests approved and queued for block assignment`);
     setSelectedIds(new Set());
   };
 
   const handleBulkReject = () => {
+    setRequests(
+      requests.map((r) => (selectedIds.has(r.id) ? { ...r, status: 'Cancelled' as Status } : r))
+    );
     toast.error(`${selectedIds.size} requests rejected`);
     setSelectedIds(new Set());
   };
 
   const SortIcon = ({ k }: { k: SortKey }) => {
     if (sortKey !== k) return <ChevronsUpDown size={11} className="text-muted-foreground/50" />;
-    return sortDir === 'asc'
-      ? <ChevronUp size={11} className="text-primary" />
-      : <ChevronDown size={11} className="text-primary" />;
+    return sortDir === 'asc' ? (
+      <ChevronUp size={11} className="text-primary" />
+    ) : (
+      <ChevronDown size={11} className="text-primary" />
+    );
   };
 
   const CONFLICTS = filtered.filter((r) => r.status === 'Conflict').length;
+  const SPLITS = filtered.filter((r) => r.status === 'Split').length;
 
   return (
-    <div className="space-y-5 fade-in">
-      {/* Page header */}
+    <div className="space-y-6 fade-in pb-16">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Maintenance Requests</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {REQUESTS.length} total requests · NR Zone · {CONFLICTS > 0 && (
+            {activeRequests.length} active · {completedRequests.length} completed · NR Zone ·{' '}
+            {CONFLICTS > 0 && (
               <span className="text-negative font-medium">{CONFLICTS} conflicts require attention</span>
             )}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <RoleSwitcher />
           <button className="btn-secondary text-sm" onClick={() => toast.info('Refreshing requests…')}>
             <RefreshCw size={13} />
             Refresh
@@ -149,7 +250,14 @@ export default function RequestsPageClient() {
         </div>
       </div>
 
-      {/* Conflict alert */}
+      {!canChangeStatus && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/40 text-xs text-muted-foreground">
+          <Lock size={12} />
+          Status changes are restricted to Sr. Divisional Engineer — switch role above to try it.
+        </div>
+      )}
+
+      {/* Conflict Alert */}
       {CONFLICTS > 0 && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-negative-tint border border-negative/25">
           <AlertTriangle size={16} className="text-negative shrink-0" />
@@ -157,13 +265,27 @@ export default function RequestsPageClient() {
             <span className="font-semibold">{CONFLICTS} maintenance blocks</span> have train conflicts.
             Review and resolve before the next operating window.
           </p>
-          <button className="btn-ghost text-xs text-negative ml-auto" onClick={() => router.push('/conflict-alerts')}>
+          <button className="btn-ghost text-xs text-negative ml-auto" onClick={() => setStatusFilter('Conflict')}>
             View Conflicts
           </button>
         </div>
       )}
 
-      {/* Search + filters */}
+      {/* Split Alert */}
+      {SPLITS > 0 && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-accent/10 border border-accent/25">
+          <SplitIcon size={16} className="text-accent shrink-0" />
+          <p className="text-sm text-foreground">
+            <span className="font-semibold">{SPLITS} maintenance blocks</span> were split across multiple
+            windows because no single slot was free.
+          </p>
+          <button className="btn-ghost text-xs text-accent ml-auto" onClick={() => setStatusFilter('Split')}>
+            View Split Blocks
+          </button>
+        </div>
+      )}
+
+      {/* Filters */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -171,16 +293,21 @@ export default function RequestsPageClient() {
             type="text"
             placeholder="Search by ID, segment, requester…"
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             className="input-field pl-9 text-sm"
           />
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Dept */}
           <select
             value={deptFilter}
-            onChange={(e) => { setDeptFilter(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setDeptFilter(e.target.value);
+              setPage(1);
+            }}
             className="select-field text-xs"
             style={{ width: 120 }}
           >
@@ -190,10 +317,12 @@ export default function RequestsPageClient() {
             <option value="S&T">S&T</option>
           </select>
 
-          {/* Priority */}
           <select
             value={priorityFilter}
-            onChange={(e) => { setPriorityFilter(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setPriorityFilter(e.target.value);
+              setPage(1);
+            }}
             className="select-field text-xs"
             style={{ width: 130 }}
           >
@@ -204,44 +333,62 @@ export default function RequestsPageClient() {
             <option value="Low">Low</option>
           </select>
 
-          {/* Status */}
           <select
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
             className="select-field text-xs"
             style={{ width: 130 }}
           >
             <option value="All">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Scheduled">Scheduled</option>
-            <option value="Active">Active</option>
-            <option value="Conflict">Conflict</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
+            {ALL_STATUSES.filter((s) => s !== 'Completed').map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
           </select>
 
           {(deptFilter !== 'All' || priorityFilter !== 'All' || statusFilter !== 'All' || search) && (
             <button
               className="btn-ghost text-xs text-negative"
-              onClick={() => { setDeptFilter('All'); setPriorityFilter('All'); setStatusFilter('All'); setSearch(''); setPage(1); }}
+              onClick={() => {
+                setDeptFilter('All');
+                setPriorityFilter('All');
+                setStatusFilter('All');
+                setSearch('');
+                setPage(1);
+              }}
             >
               Clear filters
             </button>
           )}
         </div>
       </div>
-
-      {/* Table */}
+      {/* ================= PRIMARY BLOCK: ACTIVE REQUESTS ================= */}
       <div className="card-surface overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock size={15} className="text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Active & Scheduled Requests</h2>
+          </div>
+          <span className="status-badge bg-primary/15 text-primary">
+            {activeRequests.length} In Pipeline
+          </span>
+        </div>
+
         <div className="overflow-x-auto scrollbar-thin">
-          <table className="w-full text-sm" style={{ minWidth: 1100 }}>
+          <table className="w-full text-sm" style={{ minWidth: 1200 }}>
             <thead>
               <tr className="border-b border-border bg-muted/30">
                 <th className="w-10 px-3 py-3 text-left">
                   <button onClick={toggleAll} className="text-muted-foreground hover:text-foreground">
-                    {selectedIds.size === paginated.length && paginated.length > 0
-                      ? <CheckSquare size={15} className="text-primary" />
-                      : <Square size={15} />}
+                    {selectedIds.size === paginated.length && paginated.length > 0 ? (
+                      <CheckSquare size={15} className="text-primary" />
+                    ) : (
+                      <Square size={15} />
+                    )}
                   </button>
                 </th>
                 {[
@@ -253,7 +400,7 @@ export default function RequestsPageClient() {
                   { key: 'priority' as SortKey, label: 'Priority', w: 90 },
                   { key: 'preferredStart' as SortKey, label: 'Preferred Window', w: 150 },
                   { key: 'requestedBy' as SortKey, label: 'Requested By', w: 130 },
-                  { key: 'status' as SortKey, label: 'Status', w: 110 },
+                  { key: 'status' as SortKey, label: 'Status', w: 150 },
                   { key: 'assignedBlock' as SortKey, label: 'Assigned Block', w: 120 },
                 ].map((col) => (
                   <th
@@ -277,28 +424,40 @@ export default function RequestsPageClient() {
               {paginated.length === 0 ? (
                 <tr>
                   <td colSpan={12} className="px-6 py-12 text-center text-muted-foreground text-sm">
-                    No maintenance requests match your filters.
+                    No active maintenance requests match your filters.
                   </td>
                 </tr>
               ) : (
                 paginated.map((req) => (
                   <tr
                     key={req.id}
-                    className={`table-row-hover ${selectedIds.has(req.id) ? 'bg-primary/5' : ''} ${req.status === 'Conflict' ? 'bg-negative-tint/20' : ''}`}
+                    className={`table-row-hover ${selectedIds.has(req.id) ? 'bg-primary/5' : ''} ${
+                      req.status === 'Conflict' ? 'bg-negative-tint/20' : ''
+                    } ${req.status === 'Split' ? 'bg-accent/5' : ''}`}
                   >
                     <td className="px-3 py-2.5">
                       <button onClick={() => toggleRow(req.id)} className="text-muted-foreground hover:text-foreground">
-                        {selectedIds.has(req.id)
-                          ? <CheckSquare size={14} className="text-primary" />
-                          : <Square size={14} />}
+                        {selectedIds.has(req.id) ? (
+                          <CheckSquare size={14} className="text-primary" />
+                        ) : (
+                          <Square size={14} />
+                        )}
                       </button>
                     </td>
                     <td className="px-3 py-2.5">
-                      <span className="font-mono-data text-xs text-foreground font-semibold">{req.requestId}</span>
+                      <span className="font-mono-data text-xs text-foreground font-semibold">
+                        {req.requestId}
+                      </span>
                       {req.conflictsWith && (
                         <div className="flex items-center gap-1 mt-0.5">
                           <AlertTriangle size={10} className="text-negative" />
                           <span className="text-2xs text-negative">vs {req.conflictsWith}</span>
+                        </div>
+                      )}
+                      {req.status === 'Split' && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <SplitIcon size={10} className="text-accent" />
+                          <span className="text-2xs text-accent">multi-window</span>
                         </div>
                       )}
                     </td>
@@ -311,8 +470,11 @@ export default function RequestsPageClient() {
                     <td className="px-3 py-2.5">
                       <span
                         className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          req.lineType === 'UP' ?'bg-accent/15 text-accent'
-                            : req.lineType === 'DOWN' ?'bg-primary/15 text-primary' :'bg-muted text-muted-foreground'
+                          req.lineType === 'UP'
+                            ? 'bg-accent/15 text-accent'
+                            : req.lineType === 'DOWN'
+                            ? 'bg-primary/15 text-primary'
+                            : 'bg-muted text-muted-foreground'
                         }`}
                       >
                         {req.lineType}
@@ -334,7 +496,22 @@ export default function RequestsPageClient() {
                       <div className="text-2xs text-muted-foreground">{req.submittedAt}</div>
                     </td>
                     <td className="px-3 py-2.5">
-                      <StatusBadge status={req.status as any} />
+                      {canChangeStatus ? (
+                        <select
+                          value={req.status}
+                          onChange={(e) => updateStatus(req.id, e.target.value as Status)}
+                          className="select-field text-xs"
+                          style={{ width: 130 }}
+                        >
+                          {ALL_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <StatusBadge status={req.status as any} />
+                      )}
                     </td>
                     <td className="px-3 py-2.5">
                       {req.assignedBlock ? (
@@ -381,15 +558,20 @@ export default function RequestsPageClient() {
             <span>Show</span>
             <select
               value={itemsPerPage}
-              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setPage(1); }}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value));
+                setPage(1);
+              }}
               className="select-field text-xs"
               style={{ width: 60 }}
             >
               {ITEMS_PER_PAGE_OPTIONS.map((n) => (
-                <option key={`ipp-${n}`} value={n}>{n}</option>
+                <option key={`ipp-${n}`} value={n}>
+                  {n}
+                </option>
               ))}
             </select>
-            <span>of {sorted.length} requests</span>
+            <span>of {sorted.length} active requests</span>
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -406,9 +588,7 @@ export default function RequestsPageClient() {
                   key={`page-${p}`}
                   onClick={() => setPage(p)}
                   className={`w-7 h-7 rounded text-xs font-semibold transition-all ${
-                    page === p
-                      ? 'bg-primary text-primary-foreground'
-                      : 'btn-ghost'
+                    page === p ? 'bg-primary text-primary-foreground' : 'btn-ghost'
                   }`}
                 >
                   {p}
@@ -427,6 +607,88 @@ export default function RequestsPageClient() {
         </div>
       </div>
 
+      {/* ================= SECONDARY BLOCK: COMPLETED REQUESTS HISTORY ================= */}
+      <div className="card-surface overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={15} className="text-positive" />
+            <h2 className="text-sm font-semibold text-foreground">Completed Requests History</h2>
+          </div>
+          <span className="status-badge bg-positive-tint text-positive">
+            {completedRequests.length} Fulfilled
+          </span>
+        </div>
+
+        {completedRequests.length === 0 ? (
+          <div className="px-6 py-8 text-center text-muted-foreground text-sm">
+            No completed requests yet. Mark any active request as Completed to archive it here.
+          </div>
+        ) : (
+          <div className="overflow-x-auto scrollbar-thin">
+            <table className="w-full text-sm" style={{ minWidth: 900 }}>
+              <thead>
+                <tr className="border-b border-border bg-muted/20">
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">
+                    Request ID
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">
+                    Segment
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">
+                    Dept
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">
+                    Duration
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">
+                    Requested By
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase">
+                    Status
+                  </th>
+                  <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/20 text-muted-foreground">
+                {completedRequests.map((req) => (
+                  <tr key={req.id} className="hover:bg-muted/10 transition-colors">
+                    <td className="px-3 py-2.5 font-mono-data text-xs text-foreground/80 font-semibold line-through">
+                      {req.requestId}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs">{req.segment}</td>
+                    <td className="px-3 py-2.5">
+                      <DeptBadge dept={req.dept} />
+                    </td>
+                    <td className="px-3 py-2.5 font-mono-data text-xs">{req.durationMins} min</td>
+                    <td className="px-3 py-2.5 text-xs">{req.requestedBy}</td>
+                    <td className="px-3 py-2.5">
+                      <span className="status-badge bg-positive-tint text-positive font-semibold text-2xs">
+                        Completed
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {canChangeStatus ? (
+                        <button
+                          onClick={() => updateStatus(req.id, 'Pending')}
+                          className="inline-flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground hover:underline transition"
+                          title="Reopen request"
+                        >
+                          <RotateCcw size={11} /> Reopen
+                        </button>
+                      ) : (
+                        <span className="text-2xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 card-surface-elevated border border-border shadow-xl rounded-xl slide-up">
@@ -438,17 +700,7 @@ export default function RequestsPageClient() {
             <CheckCircle size={13} />
             Approve All
           </button>
-          <button
-            className="btn-secondary text-xs gap-1.5"
-            onClick={() => toast.info('Triggering optimization for selected segments…')}
-          >
-            <Play size={13} />
-            Run Optimization
-          </button>
-          <button
-            className="btn-ghost text-xs text-negative gap-1.5"
-            onClick={handleBulkReject}
-          >
+          <button className="btn-secondary text-xs gap-1.5" onClick={handleBulkReject}>
             <XCircle size={13} />
             Reject All
           </button>
@@ -456,21 +708,60 @@ export default function RequestsPageClient() {
             className="btn-ghost text-xs text-muted-foreground"
             onClick={() => setSelectedIds(new Set())}
           >
-            Cancel
+            Clear
           </button>
         </div>
       )}
 
-      {/* Detail drawer */}
+      {/* Drawers and Modals */}
       {drawerRequest && (
         <RequestDetailDrawer
           request={drawerRequest}
           onClose={() => setDrawerRequest(null)}
+          canChangeStatus={canChangeStatus}
+          onStatusChange={canChangeStatus ? (status) => updateStatus(drawerRequest.id, status as Status) : undefined}
+          onApplyWindow={canChangeStatus ? applyWindow : undefined}
+          onBumpRequest={canChangeStatus ? bumpRequest : undefined}
+          onDeferToAnotherDay={canChangeStatus ? deferToAnotherDay : undefined}
         />
       )}
 
-      {/* New request modal */}
-      <NewRequestModal open={showNewModal} onClose={() => setShowNewModal(false)} />
+      {showNewModal && (
+        <NewRequestModal
+          open={showNewModal}
+          onClose={() => setShowNewModal(false)}
+          onCreate={(newReq) => {
+            addRequest(newReq);
+            setShowNewModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }
+
+/*
+ * FILES THAT WOULD LET THIS BE FULLY, TYPE-SAFE WIRED (not required to read
+ * this file, but needed to close the loop end-to-end):
+ *
+ * 1. @/lib/maintenanceRequests.ts - the `Status` union needs a `'Split'`
+ *    member, and `UIMaintenanceRequest` needs optional `splitWindows` and
+ *    `adminResolution` fields (matching ScheduledBlock in main.py) so they
+ *    survive without the `as any` / `as UIMaintenanceRequest` casts used
+ *    here.
+ * 2. @/lib/useMaintenanceRequests.ts - to confirm `setRequests`/`updateStatus`
+ *    persist these new fields (e.g. to localStorage) the same way the rest
+ *    of the request already does.
+ * 3. @/components/ui/statusbadge.tsx - to give 'Split' its own color/label
+ *    instead of falling through to a default badge style.
+ * 4. Whatever maps the backend's ScheduledBlock[] response onto
+ *    UIMaintenanceRequest[] (likely in solverClient.ts or runFullOptimization.ts)
+ *    - it needs to actually copy `splitWindows` and `adminResolution` from
+ *    the API response onto the stored request, or none of this will ever
+ *    have real data to show.
+ *
+ * Also worth knowing: applyWindow / bumpRequest / deferToAnotherDay only
+ * update local state right now - they don't call the solver again. A real
+ * "Bump this request" should probably re-trigger runFullOptimization() so
+ * the freed-up slot actually gets used, rather than just changing statuses.
+ */

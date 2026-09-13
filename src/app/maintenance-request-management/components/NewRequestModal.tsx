@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import Modal from '@/components/ui/modal';
 import { Loader2 } from 'lucide-react';
+import type { UIMaintenanceRequest } from '@/lib/maintenanceRequests';
 
 interface FormData {
   fromStation: string;
@@ -27,9 +28,11 @@ const NR_STATIONS = [
 export default function NewRequestModal({
   open,
   onClose,
+  onCreate,
 }: {
   open: boolean;
   onClose: () => void;
+  onCreate?: (request: UIMaintenanceRequest) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const {
@@ -41,13 +44,33 @@ export default function NewRequestModal({
 
   const onSubmit = (data: FormData) => {
     setSubmitting(true);
-    // Backend integration: POST /api/maintenance-requests { ...data, zone: 'NR', submittedAt: new Date() }
+    // Backend integration (future): POST /api/maintenance-requests { ...data, zone: 'NR' }
     setTimeout(() => {
       setSubmitting(false);
-      toast.success(`Maintenance request submitted — MR-2026-${Math.floor(Math.random() * 9000 + 1000)}`);
+      const requestId = `MR-2026-${Math.floor(Math.random() * 9000 + 1000)}`;
+
+      const newRequest: UIMaintenanceRequest = {
+        id: `req-${Date.now()}`,
+        requestId,
+        segment: `${data.fromStation}–${data.toStation}`, // en-dash, matches convention used elsewhere
+        fromStation: data.fromStation,
+        toStation: data.toStation,
+        lineType: data.lineType as UIMaintenanceRequest['lineType'],
+        dept: data.dept as UIMaintenanceRequest['dept'],
+        durationMins: Number(data.durationMins),
+        preferredStart: data.preferredStart,
+        preferredEnd: data.preferredEnd,
+        priority: data.priority as UIMaintenanceRequest['priority'],
+        requestedBy: data.requestedBy,
+        submittedAt: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        status: 'Pending',
+      };
+
+      onCreate?.(newRequest);
+      toast.success(`Maintenance request submitted — ${requestId}`);
       reset();
       onClose();
-    }, 1400);
+    }, 1000);
   };
 
   return (

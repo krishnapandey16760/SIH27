@@ -62,14 +62,27 @@ class SolveRequest(BaseModel):
     useGA: bool = False
 
 
+class SplitWindow(BaseModel):
+    startMin: int
+    endMin: int
+
+
+class AdminResolution(BaseModel):
+    suggestedWindows: list[SplitWindow] = []
+    blockingRequestIds: list[str] = []
+    recommendDeferToAnotherDay: bool = False
+
+
 class ScheduledBlock(BaseModel):
     requestId: str
     segmentId: str
     lineType: str
     startMin: int
     endMin: int
-    status: Literal["Scheduled", "Shifted", "Conflict"]
+    status: Literal["Scheduled", "Shifted", "Split", "Conflict"]
     reason: Optional[str] = None
+    splitWindows: Optional[list[SplitWindow]] = None
+    adminResolution: Optional[AdminResolution] = None
 
 
 @app.get("/api/health")
@@ -84,8 +97,18 @@ def solve(payload: SolveRequest):
 
     milp_result = solve_milp(trains, requests)
 
-    if payload.useGA and payload.networkEdges:
+    # Conflict/Split results are already final decisions (or admin-facing
+    # data) - the GA layer only deals in single, movable time windows, so
+    # requests that didn't get a normal Scheduled/Shifted placement are
+    # excluded from what it re-optimizes and passed through untouched.
+    passthrough_statuses = {"Conflict", "Split"}
+    passthrough_results = [r for r in milp_result if r["status"] in passthrough_statuses]
+    passthrough_ids = {r["requestId"] for r in passthrough_results}
+    ga_eligible_requests = [r for r in requests if r["id"] not in passthrough_ids]
+
+    if payload.useGA and payload.networkEdges and ga_eligible_requests:
         edges = [{"segmentId": e.segmentId, "from": e.from_, "to": e.to} for e in payload.networkEdges]
-        return refine_with_ga(milp_result, requests, edges)
+        refined = refine_with_ga(milp_result, ga_eligible_requests, edges, trains=trains)
+        return refined + passthrough_results
 
     return milp_result

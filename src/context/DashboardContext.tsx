@@ -13,6 +13,9 @@ interface DashboardContextValue {
   seed: number;
   runNonce: number;
   triggerRun: () => void;
+  trainDelays: Record<string, number>;
+  setTrainDelay: (trainNumber: string, minutes: number) => void;
+  resetTrainDelays: () => void;
 }
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);
@@ -47,6 +50,12 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('Daily');
   const [now, setNow] = useState<Date>(new Date());
   const [runNonce, setRunNonce] = useState(0);
+  const [trainDelays, setTrainDelays] = useState<Record<string, number>>({});
+
+  const setTrainDelay = (trainNumber: string, minutes: number) =>
+    setTrainDelays((prev) => ({ ...prev, [trainNumber]: minutes }));
+
+  const resetTrainDelays = () => setTrainDelays({});
 
   // Live clock — ticks every second so displayed time is always current.
   useEffect(() => {
@@ -60,7 +69,19 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <DashboardContext.Provider
-      value={{ selectedDate, setSelectedDate, timeRange, setTimeRange, now, seed, runNonce, triggerRun }}
+      value={{
+        selectedDate,
+        setSelectedDate,
+        timeRange,
+        setTimeRange,
+        now,
+        seed,
+        runNonce,
+        triggerRun,
+        trainDelays,
+        setTrainDelay,
+        resetTrainDelays,
+      }}
     >
       {children}
     </DashboardContext.Provider>

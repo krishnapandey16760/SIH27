@@ -45,16 +45,16 @@ const NAV_ITEMS: NavItem[] = [
     icon: <Train size={18} />,
     group: 'Visualization',
   },
-  {
-    id: 'nav-activity',
-    label: 'Activity Log',
-    href: '#',
-    icon: <Activity size={18} />,
-    group: 'Monitoring',
-  },
+  // {
+  //   id: 'nav-activity',
+  //   label: 'Activity Log',
+  //   href: '#',
+  //   icon: <Activity size={18} />,
+  //   group: 'Monitoring',
+  // },
 ];
 
-const GROUPS = ['Planning', 'Visualization', 'Monitoring'];
+const GROUPS = ['Planning', 'Visualization'];
 
 interface SidebarProps {
   collapsed: boolean;

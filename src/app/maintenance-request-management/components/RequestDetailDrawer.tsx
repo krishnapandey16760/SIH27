@@ -1,13 +1,24 @@
 'use client';
 
 import React from 'react';
-import { X, AlertTriangle, CheckCircle, Play, MapPin, Clock, User, Calendar, Activity } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle, Play, MapPin, Clock, User, Calendar, Activity, Lock, Split as SplitIcon, ArrowRightLeft, CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/ui/statusbadge';
 import PriorityBadge from '@/components/ui/prioritybadge';
 import DeptBadge from '@/components/ui/deptbadge';
+import type { Status } from '@/lib/maintenanceRequests';
 
-// ... baaki poora code same
+interface TimeWindow {
+  startMin: number;
+  endMin: number;
+}
+
+interface AdminResolution {
+  suggestedWindows: TimeWindow[];
+  blockingRequestIds: string[];
+  recommendDeferToAnotherDay: boolean;
+}
+
 interface Request {
   id: string;
   requestId: string;
@@ -25,14 +36,37 @@ interface Request {
   status: any;
   assignedBlock?: string;
   conflictsWith?: string;
+  // New: mirrors ScheduledBlock from the backend (see milp_solver.py) once
+  // whatever maps the solver response onto UIMaintenanceRequest copies
+  // these fields across.
+  splitWindows?: TimeWindow[] | null;
+  adminResolution?: AdminResolution | null;
 }
+
+const ALL_STATUSES: Status[] = ['Pending', 'Scheduled', 'Active', 'Split' as Status, 'Completed', 'Cancelled', 'Conflict'];
+
+const minutesToClock = (mins: number): string => {
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
 
 export default function RequestDetailDrawer({
   request,
   onClose,
+  canChangeStatus = false,
+  onStatusChange,
+  onApplyWindow,
+  onBumpRequest,
+  onDeferToAnotherDay,
 }: {
   request: Request;
   onClose: () => void;
+  canChangeStatus?: boolean;
+  onStatusChange?: (id: string, status: Status) => void;
+  onApplyWindow?: (id: string, window: TimeWindow) => void;
+  onBumpRequest?: (id: string, blockingRequestId: string) => void;
+  onDeferToAnotherDay?: (id: string) => void;
 }) {
   return (
     <div
@@ -66,7 +100,7 @@ export default function RequestDetailDrawer({
         </div>
 
         <div className="flex-1 p-5 space-y-5">
-          {/* Conflict alert */}
+          {/* Conflict alert (legacy, single-cause) */}
           {request.status === 'Conflict' && request.conflictsWith && (
             <div className="flex items-start gap-3 p-3 rounded-lg bg-negative-tint border border-negative/25">
               <AlertTriangle size={15} className="text-negative mt-0.5 shrink-0" />
@@ -79,6 +113,107 @@ export default function RequestDetailDrawer({
                   Re-run optimization to resolve or manually adjust the time window.
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Split breakdown */}
+          {request.status === 'Split' && request.splitWindows && request.splitWindows.length > 0 && (
+            <div className="p-3 rounded-lg bg-accent/10 border border-accent/25 space-y-2">
+              <div className="flex items-center gap-2">
+                <SplitIcon size={14} className="text-accent" />
+                <p className="text-xs font-semibold text-accent">
+                  Split into {request.splitWindows.length} parts
+                </p>
+              </div>
+              <p className="text-2xs text-muted-foreground">
+                No single free window covered the full {request.durationMins} min - the solver spread it
+                across the day instead of leaving it unscheduled.
+              </p>
+              <div className="space-y-1.5 pt-1">
+                {request.splitWindows.map((w, i) => (
+                  <div key={`split-${i}`} className="flex items-center gap-2 text-xs font-mono-data text-foreground">
+                    <span className="text-2xs text-muted-foreground w-14 shrink-0">Part {i + 1}</span>
+                    {minutesToClock(w.startMin)} – {minutesToClock(w.endMin)}
+                    <span className="text-2xs text-muted-foreground">
+                      ({w.endMin - w.startMin} min)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Admin conflict resolution */}
+          {request.status === 'Conflict' && request.adminResolution && (
+            <div className="space-y-3">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Resolve Conflict
+              </h4>
+
+              {request.adminResolution.suggestedWindows.length > 0 && (
+                <div className="p-3 rounded-lg border border-border space-y-2">
+                  <p className="text-xs font-medium text-foreground">Suggested alternative windows</p>
+                  <p className="text-2xs text-muted-foreground -mt-1">
+                    Best available gaps found elsewhere in the day - may be shorter than the full
+                    requested duration.
+                  </p>
+                  {request.adminResolution.suggestedWindows.map((w, i) => (
+                    <div key={`sw-${i}`} className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-mono-data text-foreground">
+                        {minutesToClock(w.startMin)} – {minutesToClock(w.endMin)}
+                      </span>
+                      <button
+                        className="btn-secondary text-2xs shrink-0"
+                        disabled={!canChangeStatus}
+                        onClick={() => onApplyWindow?.(request.id, w)}
+                      >
+                        <ArrowRightLeft size={11} />
+                        Apply this window
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {request.adminResolution.blockingRequestIds.length > 0 && (
+                <div className="p-3 rounded-lg border border-border space-y-2">
+                  <p className="text-xs font-medium text-foreground">Lower-priority blocks nearby</p>
+                  <p className="text-2xs text-muted-foreground -mt-1">
+                    These already-scheduled requests sit close to this one's preferred time and could
+                    be bumped to free up space.
+                  </p>
+                  {request.adminResolution.blockingRequestIds.map((rid) => (
+                    <div key={`block-${rid}`} className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-mono-data text-foreground">{rid}</span>
+                      <button
+                        className="btn-secondary text-2xs shrink-0"
+                        disabled={!canChangeStatus}
+                        onClick={() => onBumpRequest?.(request.id, rid)}
+                      >
+                        Bump this request
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {request.adminResolution.recommendDeferToAnotherDay && (
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/30">
+                  <div className="flex items-start gap-2">
+                    <CalendarClock size={14} className="text-muted-foreground mt-0.5 shrink-0" />
+                    <p className="text-xs text-foreground">
+                      No slot - even split up - fits today on this segment/line.
+                    </p>
+                  </div>
+                  <button
+                    className="btn-primary text-2xs shrink-0"
+                    disabled={!canChangeStatus}
+                    onClick={() => onDeferToAnotherDay?.(request.id)}
+                  >
+                    Defer to another day
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -140,7 +275,7 @@ export default function RequestDetailDrawer({
             <div className="space-y-2">
               {[
                 { id: 'ca-1', check: 'No-overlap constraint (Hard)', pass: request.status !== 'Conflict' },
-                { id: 'ca-2', check: 'Contiguous time slot requirement', pass: true },
+                { id: 'ca-2', check: 'Contiguous time slot requirement', pass: request.status !== 'Split' },
                 { id: 'ca-3', check: 'Maintenance window within preferred period', pass: request.status !== 'Conflict' },
                 { id: 'ca-4', check: 'Resource availability (crew + equipment)', pass: true },
                 { id: 'ca-5', check: 'Block duration ≤ max allowed (360 min)', pass: request.durationMins <= 360 },
@@ -156,6 +291,29 @@ export default function RequestDetailDrawer({
               ))}
             </div>
           </div>
+
+          {/* Status change — role gated */}
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+              Update Status
+            </h4>
+            {canChangeStatus ? (
+              <select
+                value={request.status}
+                onChange={(e) => onStatusChange?.(request.id, e.target.value as Status)}
+                className="select-field text-sm w-full"
+              >
+                {ALL_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground px-3 py-2 rounded-lg bg-muted/40">
+                <Lock size={12} />
+                Only Sr. Divisional Engineer can change status
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Footer actions */}
@@ -170,18 +328,6 @@ export default function RequestDetailDrawer({
             <Play size={12} />
             Run Optimization
           </button>
-          {request.status === 'Pending' && (
-            <button
-              className="btn-secondary text-xs"
-              onClick={() => {
-                toast.success(`${request.requestId} approved`);
-                onClose();
-              }}
-            >
-              <CheckCircle size={12} />
-              Approve
-            </button>
-          )}
         </div>
       </div>
     </div>
