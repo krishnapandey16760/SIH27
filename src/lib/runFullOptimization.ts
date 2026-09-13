@@ -1,5 +1,6 @@
 import type { TrainMovement } from './solver';
-import { REQUESTS, toSolverRequests } from './maintenanceRequests';
+import { toSolverRequests } from './maintenanceRequests';
+import { loadActiveRequests } from './maintenanceRequestsStore';
 import { EDGES } from './networkGraph';
 import { solveScheduleRemote, type SolveResult } from './solverClient';
 
@@ -9,7 +10,7 @@ import { solveScheduleRemote, type SolveResult } from './solverClient';
  * Optimization Panel should call instead of generating fake numbers.
  */
 export async function runFullOptimization(useGA: boolean = false): Promise<SolveResult> {
-  const solverRequests = toSolverRequests(REQUESTS);
+  const solverRequests = toSolverRequests(loadActiveRequests());
 
   // Pull real train movements for each segment this batch of requests touches,
   // from the timetable API built earlier (/api/timetable).

@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { formatMin, type ScheduledBlock } from '@/lib/solver';
 import { BASE_TRAINS, BASE_REQUESTS } from '@/lib/liveTrainData';
 import { solveScheduleRemote } from '@/lib/solverClient';
+import { useDashboard } from '@/context/DashboardContext';
 
 export default function LiveTrainTracker() {
-  const [delays, setDelays] = useState<Record<string, number>>({});
+  const { trainDelays, setTrainDelay, resetTrainDelays } = useDashboard();
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [results, setResults] = useState<ScheduledBlock[]>([]);
   const [loading, setLoading] = useState(false);
@@ -17,13 +18,13 @@ export default function LiveTrainTracker() {
   const effectiveTrains = useMemo(
     () =>
       BASE_TRAINS.map((t) => {
-        const d = delays[t.trainNumber] || 0;
+        const d = trainDelays[t.trainNumber] || 0;
         return { ...t, startMin: t.startMin + d, endMin: t.endMin + d };
       }),
-    [delays]
+    [trainDelays]
   );
 
-  // Re-solve via the real backend whenever delays change.
+  // Re-solve whenever delays change — same shared state the Gantt chart reads.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -55,15 +56,15 @@ export default function LiveTrainTracker() {
     const { blocks: after, engine } = await solveScheduleRemote(newTrains, BASE_REQUESTS, false);
     const afterBlock = after.find((r) => r.requestId === requestId);
 
-    setDelays((prev) => ({ ...prev, [trainNumber]: mins }));
+    setTrainDelay(trainNumber, mins); // this is what makes the Gantt chart update too
 
     if (afterBlock?.status === 'Conflict') {
       toast.error(`${trainName} delayed ${mins} min — ${requestId} could not be rescheduled`, {
-        description: `${afterBlock.reason} (engine: ${engine})`,
+        description: `${afterBlock.reason} (engine: ${engine}) — check the Gantt chart's ${afterBlock.segmentId} row`,
       });
     } else if (before && afterBlock && before.startMin !== afterBlock.startMin) {
       toast.success(`${trainName} delayed ${mins} min — ${requestId} auto-rescheduled`, {
-        description: `${formatMin(before.startMin)}–${formatMin(before.endMin)} → ${formatMin(afterBlock.startMin)}–${formatMin(afterBlock.endMin)} (${engine})`,
+        description: `${formatMin(before.startMin)}–${formatMin(before.endMin)} → ${formatMin(afterBlock.startMin)}–${formatMin(afterBlock.endMin)} — see Gantt chart`,
       });
     } else {
       toast.info(`${trainName} delayed ${mins} min — no conflict, ${requestId} unaffected`);
@@ -71,7 +72,7 @@ export default function LiveTrainTracker() {
   };
 
   const resetAll = () => {
-    setDelays({});
+    resetTrainDelays();
     setInputs({});
     toast.info('All trains reset to on-time schedule');
   };
@@ -97,7 +98,7 @@ export default function LiveTrainTracker() {
 
       <div className="divide-y divide-border/40">
         {pairs.map(({ train, request }) => {
-          const delay = delays[train.trainNumber] || 0;
+          const delay = trainDelays[train.trainNumber] || 0;
           const result = resultFor(request.id);
           const isConflict = result?.status === 'Conflict';
           const isShifted = result?.status === 'Shifted';

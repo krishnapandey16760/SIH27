@@ -37,7 +37,7 @@ export const BASE_TRAINS: TrainMovement[] = [
 
 export const BASE_REQUESTS: MaintenanceRequest[] = [
   {
-    id: 'Civil-042',
+    id: 'DEMO-Civil-042',
     segmentId: 'GZB–ALD',
     lineType: 'UP',
     dept: 'Civil',
@@ -47,7 +47,7 @@ export const BASE_REQUESTS: MaintenanceRequest[] = [
     preferredEnd: 600,
   },
   {
-    id: 'Civil-044',
+    id: 'DEMO-Civil-044',
     segmentId: 'NDLS–AGC',
     lineType: 'UP',
     dept: 'Civil',
@@ -57,7 +57,7 @@ export const BASE_REQUESTS: MaintenanceRequest[] = [
     preferredEnd: 645,
   },
   {
-    id: 'ST-010',
+    id: 'DEMO-ST-010',
     segmentId: 'MTJ–CNB',
     lineType: 'DOWN',
     dept: 'S&T',
