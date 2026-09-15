@@ -39,7 +39,7 @@ const INITIAL_STATIONS: Station[] = [
   { id: 'PTTN', code: 'PTTN', name: 'Pattan', x: 24.48, y: 3.66, division: 'Jammu', verified: true },
   { id: 'MZMA', code: 'MZMA', name: 'Mazhom', x: 24.58, y: 4.16, division: 'Jammu', verified: true },
   { id: 'NDAM', code: 'NDAM', name: 'Nadigam', x: 25.03, y: 4.3, division: 'Jammu', verified: false },
-  { id: 'BDGM', code: 'BDGM', name: 'Budgam', x: 25.48, y: 4.23 , division: 'Jammu', verified: true, scheduledTrains: 24 },
+  { id: 'BDGM', code: 'BDGM', name: 'Budgam', x: 25.48, y: 4.23, division: 'Jammu', verified: true, scheduledTrains: 24 },
   { id: 'SINA', code: 'SINA', name: 'Srinagar', x: 26.08, y: 3.18, division: 'Jammu', verified: true, scheduledTrains: 28 },
   { id: 'PMPE', code: 'PMPE', name: 'Pampore', x: 26.43, y: 4.3, division: 'Jammu', verified: false },
   { id: 'KAPE', code: 'KAPE', name: 'Kakapora', x: 26.63, y: 4.8, division: 'Jammu', verified: false },
@@ -99,7 +99,7 @@ const INITIAL_STATIONS: Station[] = [
   { id: 'CMMG', code: 'CMMG', name: 'Chamunda Marg', x: 37.23, y: 25.85, division: 'Jammu', verified: false },
   { id: 'PLMX', code: 'PLMX', name: 'Palampur Himachal', x: 38.08, y: 26.27, division: 'Jammu', verified: false },
   { id: 'BJPL', code: 'BJPL', name: 'Baijnath Paprola', x: 39.28, y: 27.12, division: 'Jammu', verified: true, scheduledTrains: 12 },
-  { id: 'JDNX', code: 'JDNX', name: 'Joginder Nagar', x: 39.93, y: 26.49, division : 'Jammu', verified: true, scheduledTrains: 8 },
+  { id: 'JDNX', code: 'JDNX', name: 'Joginder Nagar', x: 39.93, y: 26.49, division: 'Jammu', verified: true, scheduledTrains: 8 },
 
   // ----------------------------------------------------
   // SECTION 3: PUNJAB MAINWAYS & BRANCH CORRIDORS
@@ -125,7 +125,7 @@ const INITIAL_STATIONS: Station[] = [
   { id: 'PHR', code: 'PHR', name: 'Phillaur Jn', x: 39.93, y: 36.34, division: 'Firozpur', verified: true, scheduledTrains: 52 },
   { id: 'NSS', code: 'NSS', name: 'Nawanshahr Doaba', x: 34.73, y: 35.42, division: 'Firozpur', verified: true, scheduledTrains: 14 },
   { id: 'RHU', code: 'RHU', name: 'Rahon', x: 34.58, y: 36.2, division: 'Firozpur', verified: false },
-  { id: 'NKD', code: 'NRO', name: 'Nakodar Jn', x: 29.73, y: 35.63 , division: 'Firozpur', verified: true, scheduledTrains: 26 },
+  { id: 'NKD', code: 'NRO', name: 'Nakodar Jn', x: 29.73, y: 35.63, division: 'Firozpur', verified: true, scheduledTrains: 26 },
   { id: 'LNK', code: 'LNK', name: 'Lohian Khas Jn', x: 27.53, y: 35.14, division: 'Firozpur', verified: true, scheduledTrains: 30 },
   { id: 'SQR', code: 'SQR', name: 'Sultanpur Lodhi', x: 27.68, y: 34.71, division: 'Firozpur', verified: false },
   { id: 'FZR', code: 'FZR', name: 'Firozpur Cantt Jn', x: 22.18, y: 37.47, division: 'Firozpur', verified: true, scheduledTrains: 58 },
@@ -146,7 +146,7 @@ const INITIAL_STATIONS: Station[] = [
   { id: 'NMDA', code: 'NMDA', name: 'New Morinda', x: 37.73, y: 39.13, division: 'Ambala', verified: false },
   { id: 'RPAR', code: 'RPAR', name: 'Rupnagar', x: 38.28, y: 36.51, division: 'Ambala', verified: false },
   { id: 'ANSB', code: 'ANSB', name: 'Anandpur Sahib', x: 37.73, y: 34.46, division: 'Ambala', verified: true, scheduledTrains: 26 },
-  { id: 'NNGL', code: 'NLDM', name: 'Nangal Dam', x: 36.98 , y: 33.54, division: 'Ambala', verified: false },
+  { id: 'NNGL', code: 'NLDM', name: 'Nangal Dam', x: 36.98, y: 33.54, division: 'Ambala', verified: false },
   { id: 'DLPC', code: 'DLPC', name: 'Daulatpur Chowk', x: 34.08, y: 28.5, division: 'Ambala', verified: true, scheduledTrains: 16 },
   { id: 'CDG', code: 'CDG', name: 'Chandigarh Jn', x: 40.33, y: 39.69, division: 'Ambala', verified: true, scheduledTrains: 85 },
   { id: 'KLK', code: 'KLK', name: 'Kalka', x: 41.13, y: 38.66, division: 'Ambala', verified: true, scheduledTrains: 40 },
@@ -203,7 +203,7 @@ const INITIAL_STATIONS: Station[] = [
   { id: 'SEO', code: 'SEO', name: 'Seohara', x: 54.83, y: 56.06, division: 'Moradabad', verified: false },
   { id: 'KNT', code: 'KNT', name: 'Kanth', x: 55.23, y: 57.33, division: 'Moradabad', verified: false },
   { id: 'MB', code: 'MB', name: 'Moradabad Jn', x: 56.28, y: 59.66, division: 'Moradabad', verified: true, scheduledTrains: 175 },
-  { id: 'KGB', code: 'KGB', name: 'Katghar Jn', x: 56.68 , y: 59.8, division: 'Moradabad', verified: false },
+  { id: 'KGB', code: 'KGB', name: 'Katghar Jn', x: 56.68, y: 59.8, division: 'Moradabad', verified: false },
   { id: 'RJK', code: 'RJK', name: 'Raja Ka Sahaspur Jn', x: 56.58, y: 62.06, division: 'Moradabad', verified: true, scheduledTrains: 38 },
   { id: 'CH', code: 'CH', name: 'Chandausi Jn', x: 56.28, y: 64.64, division: 'Moradabad', verified: true, scheduledTrains: 42 },
   { id: 'RMU', code: 'RMU', name: 'Rampur Jn', x: 58.63, y: 60.25, division: 'Moradabad', verified: true, scheduledTrains: 64 },
@@ -235,7 +235,7 @@ const INITIAL_STATIONS: Station[] = [
   { id: 'ZBD', code: 'ZBD', name: 'Zafarabad Jn', x: 89.73, y: 92.06, division: 'Lucknow', verified: true, scheduledTrains: 38 }
 ];
 
-const INITIAL_EDGES: Edge[] = [
+export const INITIAL_EDGES: Edge[] = [
   // USBRL Valley Edge Sequence
   { id: 'e-brml-sxzm', from: 'BRML', to: 'SXZM', distanceKm: 8, lineType: 'BOTH', status: 'clear' },
   { id: 'e-sxzm-hme', from: 'SXZM', to: 'HME', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
@@ -486,7 +486,7 @@ export default function NetworkGraphClient() {
 
   return (
     <div className="relative w-full h-[85vh] bg-slate-950 text-slate-100 rounded-xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
-      
+
       {/* Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900/90 border-b border-slate-800 z-10 backdrop-blur-md">
         <div className="flex items-center gap-3">
@@ -529,11 +529,10 @@ export default function NetworkGraphClient() {
 
           <button
             onClick={() => setShowAllStations(prev => !prev)}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition ${
-              showAllStations
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition ${showAllStations
                 ? 'bg-red-600/20 border-red-500/40 text-red-300'
                 : 'bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800'
-            }`}
+              }`}
           >
             <Layers className="w-3.5 h-3.5" />
             {showAllStations ? 'All Stations' : 'Major Junctions Only'}
@@ -577,8 +576,8 @@ export default function NetworkGraphClient() {
           />
 
           {/* SVG Micro-line Tracks */}
-          <svg 
-            viewBox="0 0 100 100" 
+          <svg
+            viewBox="0 0 100 100"
             preserveAspectRatio="none"
             className="absolute inset-0 w-full h-full pointer-events-none"
           >
@@ -616,14 +615,13 @@ export default function NetworkGraphClient() {
                 style={{ left: `${station.x}%`, top: `${station.y}%` }}
               >
                 {/* Station Node Dot */}
-                <div className={`relative flex items-center justify-center rounded-full border transition-transform duration-150 ${
-                  station.verified ? 'w-1.5 h-1.5 border-black/90' : 'w-1 h-1 border-slate-700'
-                } ${(station.activeBlocks ?? 0) > 0
-                  ? 'bg-red-500 border-white shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse scale-125'
-                  : station.verified
-                    ? 'bg-amber-400 group-hover:scale-150 group-hover:bg-amber-300'
-                    : 'bg-slate-400 group-hover:scale-125'
-                }`}>
+                <div className={`relative flex items-center justify-center rounded-full border transition-transform duration-150 ${station.verified ? 'w-1.5 h-1.5 border-black/90' : 'w-1 h-1 border-slate-700'
+                  } ${(station.activeBlocks ?? 0) > 0
+                    ? 'bg-red-500 border-white shadow-[0_0_8px_rgba(239,68,68,0.9)] animate-pulse scale-125'
+                    : station.verified
+                      ? 'bg-amber-400 group-hover:scale-150 group-hover:bg-amber-300'
+                      : 'bg-slate-400 group-hover:scale-125'
+                  }`}>
                   {station.verified && (
                     <span className="w-0.5 h-0.5 rounded-full bg-black/80"></span>
                   )}
