@@ -1,10 +1,31 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bell, Search, RefreshCw, Wifi } from 'lucide-react';
 
+function formatLastUpdated(d: Date): string {
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const time = d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  return `${day}/${month}/${year} ${time} IST`;
+}
+
 export default function Topbar() {
-  const [lastUpdated] = useState('05/09/2026 09:34 IST');
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const lastUpdated = formatLastUpdated(now);
 
   return (
     <header
