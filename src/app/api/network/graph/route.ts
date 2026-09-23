@@ -47,8 +47,7 @@ export async function GET(req: NextRequest) {
     if (sourceStation) params.set('filters[source_station]', sourceStation);
     if (destinationStation) params.set('filters[destination_station]', destinationStation);
 
-    const url = `https://api.data.gov.in/resource/13051d52-05c2-4130-9e7b-891bdde84076;
-
+const url = `https://api.data.gov.in/resource/13051d52-05c2-4130-9e7b-891bdde84076?${params.toString()}`;
     try {
         const res = await fetch(url, {
             next: { revalidate: 300 }, // cache for 5 minutes to avoid hammering the upstream API
