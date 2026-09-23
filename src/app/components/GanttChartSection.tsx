@@ -9,7 +9,7 @@ import { buildRealGanttRows } from '@/lib/realGanttData';
 import { useMaintenanceRequests } from '@/lib/useMaintenanceRequests';
 import type { SolverEngine } from '@/lib/solverClient';
 
-const ROW_H = 36;
+const ROW_H = 38;
 
 const BAR_COLORS = {
   train: 'gantt-train-bar',
@@ -21,15 +21,11 @@ const DEPT_FILTERS = ['All', 'Civil', 'OHE', 'S&T'] as const;
 const LINE_FILTERS = ['All', 'UP', 'DOWN'] as const;
 const DEPT_CODE: Record<string, string> = { Civil: 'Civil', OHE: 'OHE', 'S&T': 'ST' };
 
-function getAxisLabels(timeRange: TimeRange): string[] {
-  if (timeRange === 'Daily') {
-    return Array.from({ length: 25 }, (_, i) => `${String(i).padStart(2, '0')}:00`);
-  }
-  if (timeRange === 'Weekly') {
-    return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', ''];
-  }
-  return Array.from({ length: 31 }, (_, i) => (i % 5 === 0 ? `D${i + 1}` : ''));
-}
+// Helper: Check if request is considered inactive / archived
+const isInactive = (status?: string): boolean => {
+  const s = status?.toUpperCase();
+  return s === 'COMPLETED' || s === 'CANCELLED' || s === 'REJECTED';
+};
 
 export default function GanttChartSection() {
   const { seed, timeRange, selectedDate, now, trainDelays } = useDashboard();
@@ -46,20 +42,21 @@ export default function GanttChartSection() {
 
   const isDaily = timeRange === 'Daily';
 
-  // Active aur Completed requests tracking
+  // Active requests (strictly exclude Completed, Cancelled, Rejected)
   const activeRequests = useMemo(() => {
-    return requests.filter((r) => r.status?.toUpperCase() !== 'COMPLETED');
+    return requests.filter((r) => !isInactive(r.status));
   }, [requests]);
 
-  const completedIds = useMemo(() => {
+  // Set of all inactive/archived IDs to exclude from rendering
+  const inactiveIds = useMemo(() => {
     return new Set(
       requests
-        .filter((r) => r.status?.toUpperCase() === 'COMPLETED')
+        .filter((r) => isInactive(r.status))
         .map((r) => String(r.id))
     );
   }, [requests]);
 
-  // Daily view: requests pass ho rahi hai taaki dynamic sync ho
+  // Daily view: dynamic solver refresh
   useEffect(() => {
     if (!isDaily) return;
     let cancelled = false;
@@ -85,27 +82,27 @@ export default function GanttChartSection() {
 
   const rawRows = isDaily ? realRows ?? [] : syntheticRows;
   const totalUnits = totalUnitsFor(timeRange);
-  const axisLabels = getAxisLabels(timeRange);
 
-  // Filter completed bars strictly from rows
+  // Filter inactive (completed/cancelled) bars strictly from rows
   const allRows = useMemo(() => {
     return rawRows.map((row) => {
       const filteredBars = row.bars.filter((bar) => {
         if (bar.type !== 'block') return true;
 
-        // Agar saari requests complete hain toh saare maintenance blocks hide honge
+        // If no active requests exist, hide all maintenance blocks
         if (requests.length > 0 && activeRequests.length === 0) {
           return false;
         }
 
-        // Specific completed ID match check
-        if (completedIds.has(String(bar.id))) return false;
+        // Clean ID check (removes "block-" prefix if present)
+        const cleanId = String(bar.id).replace('block-', '');
+        if (inactiveIds.has(cleanId)) return false;
 
-        const isMarkedCompleted = Array.from(completedIds).some(
+        const isMarkedInactive = Array.from(inactiveIds).some(
           (id) => bar.label?.includes(id) || bar.tooltip?.includes(id)
         );
 
-        return !isMarkedCompleted;
+        return !isMarkedInactive;
       });
 
       return {
@@ -113,7 +110,7 @@ export default function GanttChartSection() {
         bars: filteredBars,
       };
     });
-  }, [rawRows, completedIds, requests, activeRequests.length]);
+  }, [rawRows, inactiveIds, requests, activeRequests.length]);
 
   const visibleRows = useMemo(() => {
     return allRows.filter((row) => {
@@ -127,7 +124,7 @@ export default function GanttChartSection() {
     });
   }, [allRows, lineFilter, deptFilter]);
 
-  // Safe percentage calculation for accurate timeline coordinate placement
+  // Precise coordinate percentage calculation
   const minutesToPct = (min: number) => {
     const clamped = Math.max(0, Math.min(min, totalUnits));
     return (clamped / totalUnits) * 100;
@@ -256,39 +253,42 @@ export default function GanttChartSection() {
 
       {/* Chart area */}
       <div className="overflow-x-auto scrollbar-thin">
-        <div style={{ minWidth: 900 * zoom }}>
-          <div className="relative h-6 border-b border-border" style={{ marginLeft: 140 }}>
-            {axisLabels.map((label, i) => {
-              const pct = (i / (axisLabels.length - 1)) * 100;
-              const isFirst = i === 0;
-              const isLast = i === axisLabels.length - 1;
-              return (
-                <span
-                  key={`axis-${i}`}
-                  className="absolute top-1 text-2xs text-muted-foreground font-mono-data whitespace-nowrap"
-                  style={{
-                    left: `${pct}%`,
-                    transform: isFirst ? 'translateX(0)' : isLast ? 'translateX(-100%)' : 'translateX(-50%)',
-                  }}
+        <div style={{ minWidth: Math.max(1200, 1100 * zoom) }}>
+          {/* 24-Hour Column Header Cells */}
+          <div className="flex border-b border-border bg-muted/30 text-xs" style={{ height: 28 }}>
+            <div
+              className="shrink-0 px-3 flex items-center font-semibold text-muted-foreground border-r border-border"
+              style={{ width: 140 }}
+            >
+              Track Segment
+            </div>
+            <div className="relative flex-1 flex">
+              {Array.from({ length: 24 }).map((_, i) => (
+                <div
+                  key={`hour-cell-${i}`}
+                  className="flex-1 border-r border-border/40 flex items-center justify-start pl-1.5 overflow-hidden"
                 >
-                  {label}
-                </span>
-              );
-            })}
+                  <span className="text-2xs font-mono-data font-semibold text-muted-foreground/90">
+                    {String(i).padStart(2, '0')}:00
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
+          {/* Rows Body */}
           <div className="relative">
-            <div className="absolute inset-0 pointer-events-none" style={{ paddingLeft: 140 }}>
-              {axisLabels.slice(1).map((_, i) => (
+            {/* Background 24-Hour Grid Column Guides */}
+            <div className="absolute inset-0 pointer-events-none flex" style={{ paddingLeft: 140 }}>
+              {Array.from({ length: 24 }).map((_, i) => (
                 <div
-                  key={`grid-${i}`}
-                  className="absolute top-0 bottom-0 border-l border-border/20"
-                  style={{ left: `calc(140px + ${((i + 1) / (axisLabels.length - 1)) * 100}%)` }}
+                  key={`grid-col-${i}`}
+                  className="flex-1 border-r border-border/20 h-full"
                 />
               ))}
               {showNowMarker && (
                 <div
-                  className="absolute top-0 bottom-0 border-l-2 border-accent z-10"
+                  className="absolute top-0 bottom-0 border-l-2 border-accent z-20 shadow-sm"
                   style={{ left: `calc(140px + ${minutesToPct(nowMin)}%)` }}
                   title={`Now: ${now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}`}
                 />
@@ -296,25 +296,30 @@ export default function GanttChartSection() {
             </div>
 
             {isDaily && loadingReal ? (
-              <div className="px-6 py-10 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+              <div className="px-6 py-12 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
                 <Loader2 size={14} className="animate-spin" />
                 Solving today's schedule against real train movements…
               </div>
             ) : visibleRows.length === 0 ? (
-              <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-                No segments match the selected filters.
+              <div className="px-6 py-12 text-center text-sm text-muted-foreground">
+                No active maintenance or conflict-window trains on selected segments.
               </div>
             ) : (
               visibleRows.map((row) => (
                 <div
                   key={row.id}
-                  className="flex items-center border-b border-border/30 hover:bg-muted/20 transition-colors"
+                  className="flex items-center border-b border-border/30 hover:bg-muted/15 transition-colors relative z-10"
                   style={{ height: ROW_H }}
                 >
-                  <div className="shrink-0 flex items-center gap-1.5 px-3" style={{ width: 140 }}>
-                    <span className="text-xs font-semibold text-foreground truncate">{row.name}</span>
+                  <div
+                    className="shrink-0 flex items-center justify-between px-3 border-r border-border bg-background/95 select-none"
+                    style={{ width: 140, height: ROW_H }}
+                  >
+                    <span className="text-xs font-semibold text-foreground truncate" title={row.name}>
+                      {row.name}
+                    </span>
                     <span
-                      className={`text-2xs font-bold px-1 py-0.5 rounded ${
+                      className={`text-2xs font-bold px-1.5 py-0.5 rounded ${
                         row.lineType === 'UP' ? 'bg-accent/15 text-accent' : 'bg-primary/15 text-primary'
                       }`}
                     >
@@ -322,14 +327,14 @@ export default function GanttChartSection() {
                     </span>
                   </div>
 
-                  <div className="relative flex-1" style={{ height: ROW_H }}>
+                  <div className="relative flex-1 h-full">
                     {row.bars.map((bar) => {
                       const left = minutesToPct(bar.startMin);
-                      const width = Math.max(minutesToPct(bar.endMin) - left, 1.2);
+                      const width = Math.max(minutesToPct(bar.endMin) - left, 0.8);
                       return (
                         <div
                           key={bar.id}
-                          className={`absolute top-1/2 -translate-y-1/2 ${BAR_COLORS[bar.type]} flex items-center px-1.5 cursor-pointer transition-opacity hover:opacity-100`}
+                          className={`absolute top-1/2 -translate-y-1/2 ${BAR_COLORS[bar.type]} flex items-center px-1.5 cursor-pointer rounded-sm shadow-sm transition-opacity hover:opacity-100 z-10`}
                           style={{ left: `${left}%`, width: `${width}%`, height: 22 }}
                           onMouseEnter={(e) => setTooltip({ text: bar.tooltip, x: e.clientX, y: e.clientY })}
                           onMouseLeave={() => setTooltip(null)}
@@ -346,6 +351,7 @@ export default function GanttChartSection() {
         </div>
       </div>
 
+      {/* Footer info */}
       <div className="px-4 py-2 border-t border-border flex items-center gap-2">
         <Info size={12} className="text-muted-foreground" />
         <span className="text-xs text-muted-foreground">

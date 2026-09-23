@@ -1,60 +1,12 @@
 """
 GA refinement layer (DEAP).
 
-Why this exists on top of the MILP solver: milp_solver.py optimizes each
-segment+line group INDEPENDENTLY (that's what makes it fast and exactly
-solvable). But maintenance blocks on DIFFERENT segments can interact in
-two opposite ways that the per-segment MILP can't see at all - and this
-can happen even when the segments don't touch each other directly, as
-long as some train's journey passes through more than one of them:
-
-  1. BAD cascade: if a train genuinely needs one of the linked segments
-     around the proposed time (i.e. it's scheduled to be running on it
-     then), closing multiple linked segments in an overlapping window
-     compounds the disruption for that train's journey.
-  2. GOOD alignment: if NONE of the linked segments has a train
-     scheduled on it during a given window, closing all of them in
-     that SAME window is actually BETTER than staggering them - any
-     train whose route uses several of these segments only faces ONE
-     combined disruption instead of several separate ones later in its
-     journey (this mirrors how real railways bundle related possession
-     work into a single "mega-block" during quiet hours).
-
-Two segments are considered "linked" (worth checking for the above) if
-EITHER of these is true:
-  (a) They are network-adjacent - they share a station (per
-      networkGraph.ts's edges, passed in as `network_edges`).
-  (b) They are route-linked - at least one train's timetable (i.e. its
-      movements across multiple segments, present in the SAME `trains`
-      list milp_solver.py already uses) shows it travels on BOTH
-      segments, even if they are several hops apart and never share a
-      station directly.
-
-Beyond the PAIRWISE check above (which already existed), this version
-ALSO looks at each train's FULL route as a single group: if a train's
-journey touches 3+ segments that all have maintenance requests, pairwise
-bonuses alone don't reliably push the GA toward aligning all of them
-together (pairwise overlap doesn't guarantee a single common window
-across 3+ intervals - e.g. A overlaps B, B overlaps C, but A and C might
-not overlap each other at all). So there is now an EXPLICIT route-group
-term: for every train whose route touches N>=2 requested segments, if
-all N of their proposed windows share one common time window (i.e.
-max(starts) < min(ends) across all of them) and none of those N
-segments is actually busy then, the whole group gets an extra reward
-scaled by how many segments got bundled together - and an extra penalty,
-scaled the same way, if they overlap while one of the segments IS busy.
-This directly rewards fitting an entire route into one shared window,
-not just any two segments of it.
-
-"Busy" is read directly off each segment's own train movements (the
-same start/end times milp_solver.py treats as hard, non-overlappable
-intervals) - no separate station-arrival/departure bookkeeping is
-needed, since a train's occupancy of a segment already IS the interval
-during which it is using (or about to enter/just left) either endpoint
-station of that segment.
-
-No training involved: DEAP evolves a solution fresh, per request, using
-the fitness function defined below.
+Enhanced with:
+1. STRICT SAME-SEGMENT UP/DOWN CORRIDOR SYNCHRONIZATION
+2. COMMON STATION / JUNCTION CONSOLIDATION (Minimum Time Span)
+- Forces identical start times for UP and DOWN blocks on the same segment.
+- Bundles 2 or more requests sharing a junction station into the minimum possible window.
+- Synchronizes GA mutations across linked corridors to maintain asset availability.
 """
 
 import random
@@ -70,6 +22,8 @@ PRIORITY_WEIGHT = {"Critical": 100, "High": 50, "Medium": 20, "Low": 5}
 CASCADE_PENALTY = 200     # linked segments overlap WHILE a train needs one of them -> bad
 ALIGNMENT_BONUS = 60      # linked segments overlap during a window where all are free -> good
 BUSY_BUFFER_MINS = 20     # safety margin around each train's occupancy when judging "free"
+SAME_SEGMENT_DESYNC_PENALTY = 400.0  # Dominant penalty if UP and DOWN tracks on same segment diverge
+HUB_STATION_DESYNC_PENALTY = 350.0   # Dominant penalty if requests sharing a common station diverge in time
 
 
 def _overlaps(a_start, a_end, b_start, b_end):
@@ -77,11 +31,6 @@ def _overlaps(a_start, a_end, b_start, b_end):
 
 
 def _build_adjacency_links(network_edges):
-    """
-    network_edges: [{segmentId, from, to}, ...]
-    Returns {(segA, segB) sorted tuple -> reason string} for segment
-    pairs that share a station.
-    """
     by_station: dict[str, list[str]] = {}
     for e in network_edges or []:
         by_station.setdefault(e["from"], []).append(e["segmentId"])
@@ -99,16 +48,6 @@ def _build_adjacency_links(network_edges):
 
 
 def _build_train_routes(trains):
-    """
-    trains: the same TrainMovement list passed to milp_solver.py - each
-    entry has trainNumber + segmentId, so a train that traverses several
-    segments simply appears once per segment it's on.
-
-    Returns {trainNumber -> (trainName, ordered-ish list of segmentIds)}.
-    Order isn't guaranteed here (trains list isn't necessarily sorted per
-    train), that's fine - we only need the SET of segments each train
-    touches, not the sequence, for the grouping logic below.
-    """
     routes: dict[str, dict] = {}
     for t in trains or []:
         entry = routes.setdefault(t["trainNumber"], {"name": t.get("trainName", t["trainNumber"]), "segments": set()})
@@ -117,11 +56,6 @@ def _build_train_routes(trains):
 
 
 def _build_route_links(train_routes):
-    """
-    Returns {(segA, segB) sorted tuple -> reason string} for segment
-    pairs that at least one train's route touches both of, regardless of
-    whether those segments are adjacent.
-    """
     links: dict[tuple[str, str], str] = {}
     for train_number, info in train_routes.items():
         segs = sorted(info["segments"])
@@ -143,7 +77,6 @@ def _merge_links(adjacency_links, route_links):
 
 
 def _segment_busy_intervals(trains):
-    """{segmentId -> [(startMin, endMin), ...]} straight from train movements."""
     intervals: dict[str, list[tuple[int, int]]] = {}
     for t in trains or []:
         intervals.setdefault(t["segmentId"], []).append((t["startMin"], t["endMin"]))
@@ -151,8 +84,6 @@ def _segment_busy_intervals(trains):
 
 
 def _segment_busy(intervals_by_segment, segment_id, window_start, window_end, buffer_mins):
-    """True if any train occupies `segment_id` within `buffer_mins` of the
-    proposed [window_start, window_end] closure window."""
     lo, hi = window_start - buffer_mins, window_end + buffer_mins
     for s, e in intervals_by_segment.get(segment_id, []):
         if s < hi and e > lo:
@@ -179,16 +110,29 @@ def refine_with_ga(
     seg_busy = _segment_busy_intervals(trains)
     seed_starts = {b["requestId"]: b["startMin"] for b in milp_results}
 
-    # requestId -> index, and segmentId -> [request indices] (usually one,
-    # but harmless if several requests share a segment).
     requests_by_segment: dict[str, list[int]] = {}
     for idx, r in enumerate(requests):
         requests_by_segment.setdefault(r["segmentId"], []).append(idx)
 
-    # Route-level groups: for each train, every request index sitting on a
-    # segment that train's route touches - only kept when it spans 2+
-    # DISTINCT segments (a route sitting entirely on one requested segment
-    # isn't a cross-segment case).
+    # Common Junction Grouping
+    seg_to_stations: dict[str, set[str]] = {}
+    for e in network_edges or []:
+        seg_to_stations.setdefault(e["segmentId"], set()).update([e["from"], e["to"]])
+
+    station_to_request_idxs: dict[str, list[int]] = {}
+    for idx, r in enumerate(requests):
+        stations = seg_to_stations.get(r["segmentId"], set())
+        if not stations:
+            stations = set(r["segmentId"].replace("–", "-").split("-"))
+        for stn in stations:
+            station_to_request_idxs.setdefault(stn, []).append(idx)
+
+    hub_groups = [
+        (stn, sorted(set(idxs)))
+        for stn, idxs in station_to_request_idxs.items()
+        if len(set(idxs)) >= 2
+    ]
+
     route_groups: list[tuple[list[int], str]] = []
     for train_number, info in train_routes.items():
         segs_with_requests = [seg for seg in info["segments"] if seg in requests_by_segment]
@@ -203,24 +147,52 @@ def refine_with_ga(
         return random.randint(0, max(0, DAY_MINUTES - dur))
 
     def make_individual():
-        if random.random() < 0.4:
-            return creator.Individual(
-                [seed_starts.get(r["id"], r["preferredStart"]) for r in requests]
-            )
-        return creator.Individual([random_start(i) for i in range(n)])
+        if random.random() < 0.6:
+            ind = [seed_starts.get(r["id"], r["preferredStart"]) for r in requests]
+        else:
+            ind = [random_start(i) for i in range(n)]
+
+        # Initial alignment for same segment and hub groups
+        for i in range(n):
+            for j in range(i + 1, n):
+                if requests[i]["segmentId"] == requests[j]["segmentId"]:
+                    ind[j] = ind[i]
+        for _, idxs in hub_groups:
+            first_val = ind[idxs[0]]
+            for j in idxs[1:]:
+                ind[j] = first_val
+        return creator.Individual(ind)
 
     def fitness(individual):
         total = 0.0
+
+        # Base deviation cost from preferred window
         for i, r in enumerate(requests):
             dev = abs(individual[i] - r["preferredStart"])
             total += dev * PRIORITY_WEIGHT.get(r["priority"], 10)
 
-        # --- pairwise term: any two linked segments overlapping ---
+        # 1. STRICT SAME-SEGMENT UP/DOWN ALIGNMENT PENALTY
+        for i in range(n):
+            for j in range(i + 1, n):
+                r1, r2 = requests[i], requests[j]
+                if r1["segmentId"] == r2["segmentId"] and r1["lineType"] != r2["lineType"]:
+                    time_diff = abs(individual[i] - individual[j])
+                    if time_diff > 0:
+                        total += time_diff * SAME_SEGMENT_DESYNC_PENALTY
+
+        # 2. COMMON STATION / JUNCTION MINIMUM-TIME CONSOLIDATION
+        for stn, idxs in hub_groups:
+            starts = [individual[i] for i in idxs]
+            span = max(starts) - min(starts)
+            if span > 0:
+                total += span * HUB_STATION_DESYNC_PENALTY
+
+        # 3. Pairwise cross-segment conflict / alignment
         for i in range(n):
             for j in range(i + 1, n):
                 r1, r2 = requests[i], requests[j]
                 if r1["segmentId"] == r2["segmentId"]:
-                    continue  # same segment already fully handled by MILP's hard constraint
+                    continue
                 pair = tuple(sorted((r1["segmentId"], r2["segmentId"])))
                 if pair not in linked_pairs:
                     continue
@@ -241,14 +213,13 @@ def refine_with_ga(
                 else:
                     total -= ALIGNMENT_BONUS
 
-        # --- route-group term: reward/penalize fitting a WHOLE route into
-        # one shared window, not just any one pair of it ---
+        # 4. Route-group term
         for idxs, _reason in route_groups:
             starts = [individual[i] for i in idxs]
             ends = [individual[i] + requests[i]["durationMins"] for i in idxs]
             common_start, common_end = max(starts), min(ends)
             if common_start >= common_end:
-                continue  # these requests don't all share one common window
+                continue
 
             full_start, full_end = min(starts), max(ends)
             group_segments = {requests[i]["segmentId"] for i in idxs}
@@ -256,19 +227,34 @@ def refine_with_ga(
                 _segment_busy(seg_busy, seg, full_start, full_end, BUSY_BUFFER_MINS)
                 for seg in group_segments
             )
-            scale = len(group_segments) - 1  # bigger bundled routes -> bigger stake
+            scale = len(group_segments) - 1
             if busy:
                 total += CASCADE_PENALTY * scale
             else:
                 total -= ALIGNMENT_BONUS * scale
+
         return (total,)
 
     def mutate(individual):
         for i in range(n):
-            if random.random() < 0.2:
+            if random.random() < 0.25:
                 dur = requests[i]["durationMins"]
                 shift = random.randint(-30, 30)
-                individual[i] = max(0, min(DAY_MINUTES - dur, individual[i] + shift))
+                new_start = max(0, min(DAY_MINUTES - dur, individual[i] + shift))
+                individual[i] = new_start
+
+                # Keep same-segment blocks in lockstep
+                for j in range(n):
+                    if j != i and requests[j]["segmentId"] == requests[i]["segmentId"]:
+                        j_dur = requests[j]["durationMins"]
+                        individual[j] = max(0, min(DAY_MINUTES - j_dur, new_start))
+
+                # Keep common junction blocks in lockstep
+                for stn, idxs in hub_groups:
+                    if i in idxs:
+                        for j in idxs:
+                            j_dur = requests[j]["durationMins"]
+                            individual[j] = max(0, min(DAY_MINUTES - j_dur, new_start))
         return (individual,)
 
     toolbox = base.Toolbox()
@@ -286,10 +272,30 @@ def refine_with_ga(
     algorithms.eaSimple(pop, toolbox, cxpb=0.6, mutpb=0.3, ngen=generations, verbose=False)
     best = tools.selBest(pop, 1)[0]
 
-    # Work out, per request, a human-readable reason - prefer a full
-    # route-group alignment explanation over a plain pairwise one when
-    # both apply, since it's the more complete story.
+    # Re-enforce exact match for same physical segments and common junction hubs
+    for i in range(n):
+        for j in range(i + 1, n):
+            if requests[i]["segmentId"] == requests[j]["segmentId"]:
+                best[j] = best[i]
+    for _, idxs in hub_groups:
+        hub_min_start = min(best[k] for k in idxs)
+        for k in idxs:
+            best[k] = hub_min_start
+
     aligned_with: dict[str, str] = {}
+
+    # Check same segment corridor bundle
+    for i in range(n):
+        for j in range(i + 1, n):
+            if requests[i]["segmentId"] == requests[j]["segmentId"] and requests[i]["lineType"] != requests[j]["lineType"]:
+                aligned_with[requests[i]["id"]] = "Corridor bundle: UP & DOWN tracks synchronized"
+                aligned_with[requests[j]["id"]] = "Corridor bundle: UP & DOWN tracks synchronized"
+
+    # Check common junction consolidation
+    for stn, idxs in hub_groups:
+        for k in idxs:
+            if requests[k]["id"] not in aligned_with:
+                aligned_with[requests[k]["id"]] = f"Consolidated Mega-Block around junction {stn}"
 
     for idxs, reason in route_groups:
         starts = [best[i] for i in idxs]
@@ -305,46 +311,22 @@ def refine_with_ga(
         )
         if not busy:
             for i in idxs:
-                aligned_with[requests[i]["id"]] = f"bundled into the {reason}"
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            r1, r2 = requests[i], requests[j]
-            if r1["segmentId"] == r2["segmentId"]:
-                continue
-            pair = tuple(sorted((r1["segmentId"], r2["segmentId"])))
-            reason = linked_pairs.get(pair)
-            if reason is None:
-                continue
-            s1, e1 = best[i], best[i] + r1["durationMins"]
-            s2, e2 = best[j], best[j] + r2["durationMins"]
-            if not _overlaps(s1, e1, s2, e2):
-                continue
-            window_start, window_end = min(s1, s2), max(e1, e2)
-            busy = _segment_busy(
-                seg_busy, r1["segmentId"], window_start, window_end, BUSY_BUFFER_MINS
-            ) or _segment_busy(
-                seg_busy, r2["segmentId"], window_start, window_end, BUSY_BUFFER_MINS
-            )
-            if not busy:
-                aligned_with.setdefault(r1["id"], f"aligned via {reason}")
-                aligned_with.setdefault(r2["id"], f"aligned via {reason}")
+                if requests[i]["id"] not in aligned_with:
+                    aligned_with[requests[i]["id"]] = f"bundled into the {reason}"
 
     refined = []
     for i, r in enumerate(requests):
         start = int(best[i])
         end = start + r["durationMins"]
         if start == r["preferredStart"]:
-            status, reason = "Scheduled", None
+            status = "Scheduled"
+            reason = aligned_with.get(r["id"], None)
         elif r["id"] in aligned_with:
             status = "Shifted"
-            reason = (
-                f"{aligned_with[r['id']]} during a free window, to reduce total "
-                "disruptions for shared traffic"
-            )
+            reason = f"{aligned_with[r['id']]} during a shared low-traffic window"
         else:
             status = "Shifted"
-            reason = "Refined by GA to reduce cross-segment network congestion"
+            reason = "Refined by GA to minimize cross-segment network congestion"
         refined.append(
             {
                 "requestId": r["id"],
