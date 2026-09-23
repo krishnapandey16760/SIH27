@@ -1,6 +1,8 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
 import { Geist } from 'next/font/google';
+// The stylesheet is processed by Next.js; suppress TypeScript's missing declaration warning.
+// @ts-expect-error CSS side-effect imports do not require TypeScript declarations.
 import '../styles/tailwind.css';
 import { Toaster } from 'sonner';
 import { RoleProvider } from '@/context/RoleContext';
