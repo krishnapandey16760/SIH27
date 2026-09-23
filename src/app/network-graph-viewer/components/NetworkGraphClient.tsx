@@ -258,7 +258,7 @@ export const INITIAL_EDGES: Edge[] = [
   { id: 'e-bahl-kari', from: 'BAHL', to: 'KARI', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
   { id: 'e-kari-smbr', from: 'KARI', to: 'SMBR', distanceKm: 14, lineType: 'BOTH', status: 'clear' },
   { id: 'e-smbr-svdn', from: 'SMBR', to: 'SVDN', distanceKm: 19, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-svdn-swke', from: 'SVDN', to: 'SWKE', distanceKm: 18, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-001', dept: 'Civil' },
+  { id: 'e-svdn-swke', from: 'SVDN', to: 'SWKE', distanceKm: 18, lineType: 'BOTH', status: 'clear' },
   { id: 'e-swke-duca', from: 'SWKE', to: 'DUCA', distanceKm: 10, lineType: 'BOTH', status: 'clear' },
   { id: 'e-duca-bakk', from: 'DUCA', to: 'BAKK', distanceKm: 11, lineType: 'BOTH', status: 'clear' },
   { id: 'e-bakk-reasi', from: 'BAKK', to: 'REASI', distanceKm: 6, lineType: 'BOTH', status: 'clear' },
@@ -328,7 +328,7 @@ export const INITIAL_EDGES: Edge[] = [
   { id: 'e-juc-nkd', from: 'JUC', to: 'NKD', distanceKm: 32, lineType: 'BOTH', status: 'clear' },
   { id: 'e-nkd-lnk', from: 'NKD', to: 'LNK', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
   { id: 'e-lnk-sqr', from: 'LNK', to: 'SQR', distanceKm: 12, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-lnk-fzr', from: 'LNK', to: 'FZR', distanceKm: 65, lineType: 'UP', status: 'conflict', blockId: 'BLK-NR-410', dept: 'S&T' },
+  { id: 'e-lnk-fzr', from: 'LNK', to: 'FZR', distanceKm: 65, lineType: 'UP', status: 'clear' },
   { id: 'e-fzr-fzp', from: 'FZR', to: 'FZP', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
   { id: 'e-fzp-fdk', from: 'FZP', to: 'FDK', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
   { id: 'e-fdk-kkp', from: 'FDK', to: 'KKP', distanceKm: 13, lineType: 'BOTH', status: 'clear' },
@@ -368,7 +368,7 @@ export const INITIAL_EDGES: Edge[] = [
 
   // Saharanpur, Meerut & Moradabad
   { id: 'e-umb-yjud', from: 'UMB', to: 'YJUD', distanceKm: 51, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-yjud-sre', from: 'YJUD', to: 'SRE', distanceKm: 30, lineType: 'BOTH', status: 'maintenance-done', dept: 'Civil' },
+  { id: 'e-yjud-sre', from: 'YJUD', to: 'SRE', distanceKm: 30, lineType: 'BOTH', status: 'clear' },
   { id: 'e-sre-tpz', from: 'SRE', to: 'TPZ', distanceKm: 7, lineType: 'BOTH', status: 'clear' },
   { id: 'e-tpz-dbd', from: 'TPZ', to: 'DBD', distanceKm: 28, lineType: 'BOTH', status: 'clear' },
   { id: 'e-dbd-mzn', from: 'DBD', to: 'MZN', distanceKm: 24, lineType: 'BOTH', status: 'clear' },
@@ -400,7 +400,7 @@ export const INITIAL_EDGES: Edge[] = [
   { id: 'e-gzb-hpu', from: 'GZB', to: 'HPU', distanceKm: 37, lineType: 'BOTH', status: 'clear' },
   { id: 'e-hpu-gms', from: 'HPU', to: 'GMS', distanceKm: 31, lineType: 'BOTH', status: 'clear' },
   { id: 'e-gms-gjl', from: 'GMS', to: 'GJL', distanceKm: 21, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-gjl-mb', from: 'GJL', to: 'MB', distanceKm: 53, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-402', dept: 'OHE' },
+  { id: 'e-gjl-mb', from: 'GJL', to: 'MB', distanceKm: 53, lineType: 'BOTH', status: 'clear' },
 
   // Moradabad to Lucknow Segment
   { id: 'e-mb-kgb', from: 'MB', to: 'KGB', distanceKm: 4, lineType: 'BOTH', status: 'clear' },
@@ -426,7 +426,7 @@ export const INITIAL_EDGES: Edge[] = [
   { id: 'e-ay-abp', from: 'AY', to: 'ABP', distanceKm: 55, lineType: 'BOTH', status: 'clear' },
   { id: 'e-lko-rbl', from: 'LKO', to: 'RBL', distanceKm: 78, lineType: 'BOTH', status: 'clear' },
   { id: 'e-rbl-ucr', from: 'RBL', to: 'UCR', distanceKm: 38, lineType: 'BOTH', status: 'clear' },
-  { id: 'e-lko-sln', from: 'LKO', to: 'SLN', distanceKm: 140, lineType: 'BOTH', status: 'block-active', blockId: 'BLK-NR-415', dept: 'Civil' },
+  { id: 'e-lko-sln', from: 'LKO', to: 'SLN', distanceKm: 140, lineType: 'BOTH', status: 'clear' },
   { id: 'e-sln-pbh', from: 'SLN', to: 'PBH', distanceKm: 40, lineType: 'BOTH', status: 'clear' },
   { id: 'e-pbh-jnu', from: 'PBH', to: 'JNU', distanceKm: 60, lineType: 'BOTH', status: 'clear' },
   { id: 'e-jnu-zbd', from: 'JNU', to: 'ZBD', distanceKm: 6, lineType: 'BOTH', status: 'clear' }

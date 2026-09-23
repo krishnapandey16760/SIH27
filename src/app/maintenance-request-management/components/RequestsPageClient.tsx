@@ -21,7 +21,7 @@ import {
   ChevronRight,
   Lock,
   RotateCcw,
-  CheckCircle2,
+  Archive,
   Clock,
   Split as SplitIcon
 } from 'lucide-react';
@@ -40,16 +40,18 @@ type SortKey = keyof UIMaintenanceRequest;
 
 const ITEMS_PER_PAGE_OPTIONS = [10, 15, 25, 50];
 
-// NOTE: 'Split' is a new status the MILP solver can now return (a request
-// whose duration got broken across multiple non-overlapping windows instead
-// of one). Ideally this belongs in the shared `Status` union in
-// `@/lib/maintenanceRequests.ts` - see the note at the bottom of this file.
 const ALL_STATUSES: Status[] = ['Pending', 'Scheduled', 'Active', 'Split' as Status, 'Completed', 'Cancelled', 'Conflict'];
 
 const minutesToClock = (mins: number): string => {
   const h = Math.floor(mins / 60) % 24;
   const m = mins % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+// Helper: Check if request is considered inactive / archived
+const isArchived = (status?: string): boolean => {
+  const s = status?.toUpperCase();
+  return s === 'COMPLETED' || s === 'CANCELLED' || s === 'REJECTED';
 };
 
 export default function RequestsPageClient() {
@@ -79,13 +81,6 @@ export default function RequestsPageClient() {
       setDrawerRequest((prev) => (prev ? { ...prev, status: newStatus } : prev));
     }
   };
-
-  // --- Admin conflict-resolution actions --------------------------------
-  // These act on the data the MILP solver now attaches to a Conflict result
-  // (adminResolution.suggestedWindows / blockingRequestIds /
-  // recommendDeferToAnotherDay - see milp_solver.py). They're wired here as
-  // optimistic local updates; none of them re-runs the solver yet - see the
-  // note at the bottom of this file for what full wiring would still need.
 
   const applyWindow = (id: string, window: { startMin: number; endMin: number }) => {
     const target = requests.find((r) => r.id === id);
@@ -137,12 +132,13 @@ export default function RequestsPageClient() {
     });
   };
 
-  const completedRequests = useMemo(() => {
-    return requests.filter((r) => r.status === 'Completed');
+  // Separate Active from Inactive/Archived (Completed, Cancelled, Rejected)
+  const historyRequests = useMemo(() => {
+    return requests.filter((r) => isArchived(r.status));
   }, [requests]);
 
   const activeRequests = useMemo(() => {
-    return requests.filter((r) => r.status !== 'Completed');
+    return requests.filter((r) => !isArchived(r.status));
   }, [requests]);
 
   const filtered = useMemo(() => {
@@ -204,7 +200,7 @@ export default function RequestsPageClient() {
     setRequests(
       requests.map((r) => (selectedIds.has(r.id) ? { ...r, status: 'Cancelled' as Status } : r))
     );
-    toast.error(`${selectedIds.size} requests rejected`);
+    toast.error(`${selectedIds.size} requests cancelled and archived to Request History`);
     setSelectedIds(new Set());
   };
 
@@ -227,7 +223,7 @@ export default function RequestsPageClient() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Maintenance Requests</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {activeRequests.length} active · {completedRequests.length} completed · NR Zone ·{' '}
+            {activeRequests.length} active · {historyRequests.length} archived/completed · NR Zone ·{' '}
             {CONFLICTS > 0 && (
               <span className="text-negative font-medium">{CONFLICTS} conflicts require attention</span>
             )}
@@ -343,7 +339,7 @@ export default function RequestsPageClient() {
             style={{ width: 130 }}
           >
             <option value="All">All Statuses</option>
-            {ALL_STATUSES.filter((s) => s !== 'Completed').map((s) => (
+            {ALL_STATUSES.filter((s) => !isArchived(s)).map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
@@ -366,6 +362,7 @@ export default function RequestsPageClient() {
           )}
         </div>
       </div>
+
       {/* ================= PRIMARY BLOCK: ACTIVE REQUESTS ================= */}
       <div className="card-surface overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -607,21 +604,21 @@ export default function RequestsPageClient() {
         </div>
       </div>
 
-      {/* ================= SECONDARY BLOCK: COMPLETED REQUESTS HISTORY ================= */}
+      {/* ================= SECONDARY BLOCK: REQUEST HISTORY ================= */}
       <div className="card-surface overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CheckCircle2 size={15} className="text-positive" />
-            <h2 className="text-sm font-semibold text-foreground">Completed Requests History</h2>
+            <Archive size={15} className="text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">Request History</h2>
           </div>
-          <span className="status-badge bg-positive-tint text-positive">
-            {completedRequests.length} Fulfilled
+          <span className="status-badge bg-muted text-muted-foreground font-semibold">
+            {historyRequests.length} Archived
           </span>
         </div>
 
-        {completedRequests.length === 0 ? (
+        {historyRequests.length === 0 ? (
           <div className="px-6 py-8 text-center text-muted-foreground text-sm">
-            No completed requests yet. Mark any active request as Completed to archive it here.
+            No archived requests yet. Mark any active request as Completed or Cancelled to store it here.
           </div>
         ) : (
           <div className="overflow-x-auto scrollbar-thin">
@@ -652,37 +649,46 @@ export default function RequestsPageClient() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/20 text-muted-foreground">
-                {completedRequests.map((req) => (
-                  <tr key={req.id} className="hover:bg-muted/10 transition-colors">
-                    <td className="px-3 py-2.5 font-mono-data text-xs text-foreground/80 font-semibold line-through">
-                      {req.requestId}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs">{req.segment}</td>
-                    <td className="px-3 py-2.5">
-                      <DeptBadge dept={req.dept} />
-                    </td>
-                    <td className="px-3 py-2.5 font-mono-data text-xs">{req.durationMins} min</td>
-                    <td className="px-3 py-2.5 text-xs">{req.requestedBy}</td>
-                    <td className="px-3 py-2.5">
-                      <span className="status-badge bg-positive-tint text-positive font-semibold text-2xs">
-                        Completed
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      {canChangeStatus ? (
-                        <button
-                          onClick={() => updateStatus(req.id, 'Pending')}
-                          className="inline-flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground hover:underline transition"
-                          title="Reopen request"
+                {historyRequests.map((req) => {
+                  const isCompleted = req.status?.toUpperCase() === 'COMPLETED';
+                  return (
+                    <tr key={req.id} className="hover:bg-muted/10 transition-colors opacity-80 hover:opacity-100">
+                      <td className="px-3 py-2.5 font-mono-data text-xs text-foreground/80 font-semibold line-through">
+                        {req.requestId}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs">{req.segment}</td>
+                      <td className="px-3 py-2.5">
+                        <DeptBadge dept={req.dept} />
+                      </td>
+                      <td className="px-3 py-2.5 font-mono-data text-xs">{req.durationMins} min</td>
+                      <td className="px-3 py-2.5 text-xs">{req.requestedBy}</td>
+                      <td className="px-3 py-2.5">
+                        <span
+                          className={`status-badge font-semibold text-2xs ${
+                            isCompleted
+                              ? 'bg-positive-tint text-positive'
+                              : 'bg-negative/15 text-negative'
+                          }`}
                         >
-                          <RotateCcw size={11} /> Reopen
-                        </button>
-                      ) : (
-                        <span className="text-2xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                          {req.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        {canChangeStatus ? (
+                          <button
+                            onClick={() => updateStatus(req.id, 'Pending')}
+                            className="inline-flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground hover:underline transition"
+                            title="Reopen request into active pipeline"
+                          >
+                            <RotateCcw size={11} /> Reopen
+                          </button>
+                        ) : (
+                          <span className="text-2xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -739,29 +745,3 @@ export default function RequestsPageClient() {
     </div>
   );
 }
-
-/*
- * FILES THAT WOULD LET THIS BE FULLY, TYPE-SAFE WIRED (not required to read
- * this file, but needed to close the loop end-to-end):
- *
- * 1. @/lib/maintenanceRequests.ts - the `Status` union needs a `'Split'`
- *    member, and `UIMaintenanceRequest` needs optional `splitWindows` and
- *    `adminResolution` fields (matching ScheduledBlock in main.py) so they
- *    survive without the `as any` / `as UIMaintenanceRequest` casts used
- *    here.
- * 2. @/lib/useMaintenanceRequests.ts - to confirm `setRequests`/`updateStatus`
- *    persist these new fields (e.g. to localStorage) the same way the rest
- *    of the request already does.
- * 3. @/components/ui/statusbadge.tsx - to give 'Split' its own color/label
- *    instead of falling through to a default badge style.
- * 4. Whatever maps the backend's ScheduledBlock[] response onto
- *    UIMaintenanceRequest[] (likely in solverClient.ts or runFullOptimization.ts)
- *    - it needs to actually copy `splitWindows` and `adminResolution` from
- *    the API response onto the stored request, or none of this will ever
- *    have real data to show.
- *
- * Also worth knowing: applyWindow / bumpRequest / deferToAnotherDay only
- * update local state right now - they don't call the solver again. A real
- * "Bump this request" should probably re-trigger runFullOptimization() so
- * the freed-up slot actually gets used, rather than just changing statuses.
- */

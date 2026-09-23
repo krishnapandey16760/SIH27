@@ -33,6 +33,12 @@ function applyDelays(trains: TrainMovement[], delays: Record<string, number>): T
   });
 }
 
+// Helper: Check if request is considered inactive / archived
+const isInactive = (status?: string): boolean => {
+  const s = status?.toUpperCase();
+  return s === 'COMPLETED' || s === 'CANCELLED' || s === 'REJECTED';
+};
+
 /**
  * Builds Gantt rows strictly contextual to active maintenance blocks:
  * 1. If 0 active blocks exist, returns empty rows (idle track operating normally).
@@ -43,17 +49,19 @@ export async function buildRealGanttRows(
   trainDelays: Record<string, number> = {},
   userRequests?: any[]
 ): Promise<RealGanttResult> {
-  // 1. Get active requests (exclude COMPLETED)
+  // 1. Get active requests (strictly exclude COMPLETED, CANCELLED, and REJECTED)
   let activeStoreRequests: any[] = [];
   if (userRequests && Array.isArray(userRequests)) {
     activeStoreRequests = userRequests.filter(
-      (r) => r.status?.toUpperCase() !== 'COMPLETED'
+      (r) => !isInactive(r.status)
     );
   } else {
-    activeStoreRequests = loadActiveRequests();
+    activeStoreRequests = loadActiveRequests().filter(
+      (r) => !isInactive(r.status)
+    );
   }
 
-  // 2. Agar koi active request nahi hai toh clean empty return karein
+  // 2. Return clean empty state if no active requests exist
   if (activeStoreRequests.length === 0) {
     return { rows: [], engine: 'local-fallback' };
   }
@@ -75,9 +83,14 @@ export async function buildRealGanttRows(
   const rowsMap = new Map<string, SegmentRow>();
   const rowKey = (segmentId: string, lineType: LineType) => `${segmentId}__${lineType}`;
 
-  // 4. Maintenance blocks ko map me add karein aur unke time bounds record karein
-  // Structure: segmentKey -> array of { start: number, end: number }
+  // 4. Record maintenance block time bounds and build visual bars
   const maintenanceWindows = new Map<string, Array<{ start: number; end: number }>>();
+
+  const formatTime = (min: number) => {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
 
   for (const b of blocks) {
     const key = rowKey(b.segmentId, b.lineType as LineType);
@@ -94,29 +107,35 @@ export async function buildRealGanttRows(
       end: Math.min(1440, b.endMin + TWO_HOURS_MIN),
     });
 
+    const isConsolidated =
+      b.reason?.includes('Corridor bundle') ||
+      b.reason?.includes('Consolidated') ||
+      b.reason?.includes('bundled') ||
+      b.reason?.includes('Synchronized');
+
     const bar: Bar = {
       id: `block-${b.requestId}`,
       type: b.status === 'Conflict' ? 'conflict' : 'block',
-      label: b.requestId,
+      label: isConsolidated ? `🔗 ${b.requestId}` : b.requestId,
       startMin: b.startMin,
       endMin: b.endMin,
       tooltip:
         b.status === 'Conflict'
           ? `CONFLICT: ${b.reason}`
-          : `${b.requestId} — ${b.status}${b.reason ? ' · ' + b.reason : ''}`,
+          : `${b.requestId} (${b.segmentId} ${b.lineType ?? ''}) · ${b.status} · ${
+              b.reason ? b.reason : 'Scheduled Maintenance'
+            } [${formatTime(b.startMin)} - ${formatTime(b.endMin)}]`,
     };
     rowsMap.get(key)!.bars.push(bar);
   }
 
-  // 5. Sirf wahi trains add karein jo maintenance wale segment par +/- 2 hours me fall karti hon
+  // 5. Only include trains within +/- 2 hours of scheduled maintenance
   for (const t of allTrains) {
     const key = rowKey(t.segmentId, t.lineType);
     const windows = maintenanceWindows.get(key);
 
-    // Agar is segment par koi maintenance block nahi hai, toh train render nahi hogi
     if (!windows || windows.length === 0) continue;
 
-    // Check karein kya train ka time window block ke +/- 2 hours me overlap karta hai
     const isWithin2Hours = windows.some(
       (win) => t.endMin >= win.start && t.startMin <= win.end
     );
