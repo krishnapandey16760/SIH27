@@ -1,8 +1,8 @@
 'use client';
 
 import React, { memo, useMemo } from 'react';
-import AppIcon from './AppIcon';
-import AppImage from './AppImage';
+import AppIcon from './Appicon';
+import AppImage from './Appimage';
 
 interface AppLogoProps {
   src?: string; // Image source (optional)
