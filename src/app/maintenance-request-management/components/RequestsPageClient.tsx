@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   Download,
@@ -40,7 +40,15 @@ type SortKey = keyof UIMaintenanceRequest;
 
 const ITEMS_PER_PAGE_OPTIONS = [10, 15, 25, 50];
 
-const ALL_STATUSES: Status[] = ['Pending', 'Scheduled', 'Active', 'Split' as Status, 'Completed', 'Cancelled', 'Conflict'];
+const ALL_STATUSES: Status[] = [
+  'Pending',
+  'Scheduled',
+  'Active',
+  'Split' as unknown as Status,
+  'Completed',
+  'Cancelled',
+  'Conflict'
+];
 
 const minutesToClock = (mins: number): string => {
   const h = Math.floor(mins / 60) % 24;
@@ -74,9 +82,18 @@ export default function RequestsPageClient() {
   const updateStatus = (id: string, newStatus: Status) => {
     updateStatusStore(id, newStatus);
     const req = requests.find((r) => r.id === id);
-    toast.success(`${req?.requestId ?? id} marked as ${newStatus}`, {
-      description: `Updated by ${role}`,
-    });
+    const targetName = req?.requestId ?? id;
+
+    if (isArchived(newStatus as string)) {
+      toast.info(`${targetName} archived to Request History`, {
+        description: `Marked as ${newStatus} by ${role}`,
+      });
+    } else {
+      toast.success(`${targetName} marked as ${newStatus}`, {
+        description: `Updated by ${role}`,
+      });
+    }
+
     if (drawerRequest?.id === id) {
       setDrawerRequest((prev) => (prev ? { ...prev, status: newStatus } : prev));
     }
@@ -134,11 +151,11 @@ export default function RequestsPageClient() {
 
   // Separate Active from Inactive/Archived (Completed, Cancelled, Rejected)
   const historyRequests = useMemo(() => {
-    return requests.filter((r) => isArchived(r.status));
+    return requests.filter((r) => isArchived(r.status as string));
   }, [requests]);
 
   const activeRequests = useMemo(() => {
-    return requests.filter((r) => !isArchived(r.status));
+    return requests.filter((r) => !isArchived(r.status as string));
   }, [requests]);
 
   const filtered = useMemo(() => {
@@ -150,7 +167,7 @@ export default function RequestsPageClient() {
         r.requestedBy.toLowerCase().includes(search.toLowerCase());
       const matchDept = deptFilter === 'All' || r.dept === deptFilter;
       const matchPriority = priorityFilter === 'All' || r.priority === priorityFilter;
-      const matchStatus = statusFilter === 'All' || r.status === statusFilter;
+      const matchStatus = statusFilter === 'All' || (r.status as string) === statusFilter;
       return matchSearch && matchDept && matchPriority && matchStatus;
     });
   }, [activeRequests, search, deptFilter, priorityFilter, statusFilter]);
@@ -164,7 +181,14 @@ export default function RequestsPageClient() {
     });
   }, [filtered, sortKey, sortDir]);
 
-  const totalPages = Math.ceil(sorted.length / itemsPerPage) || 1;
+  const totalPages = Math.max(1, Math.ceil(sorted.length / itemsPerPage));
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const paginated = sorted.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
   const handleSort = (key: SortKey) => {
@@ -184,7 +208,7 @@ export default function RequestsPageClient() {
   };
 
   const toggleAll = () => {
-    if (selectedIds.size === paginated.length) setSelectedIds(new Set());
+    if (selectedIds.size === paginated.length && paginated.length > 0) setSelectedIds(new Set());
     else setSelectedIds(new Set(paginated.map((r) => r.id)));
   };
 
@@ -213,8 +237,15 @@ export default function RequestsPageClient() {
     );
   };
 
-  const CONFLICTS = filtered.filter((r) => r.status === 'Conflict').length;
-  const SPLITS = filtered.filter((r) => r.status === 'Split').length;
+  // Safe string comparisons to avoid ts(2367) error
+  const TOTAL_CONFLICTS = useMemo(
+    () => activeRequests.filter((r) => (r.status as string) === 'Conflict').length,
+    [activeRequests]
+  );
+  const TOTAL_SPLITS = useMemo(
+    () => activeRequests.filter((r) => (r.status as string) === 'Split').length,
+    [activeRequests]
+  );
 
   return (
     <div className="space-y-6 fade-in pb-16">
@@ -224,8 +255,8 @@ export default function RequestsPageClient() {
           <h1 className="text-2xl font-bold text-foreground">Maintenance Requests</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {activeRequests.length} active · {historyRequests.length} archived/completed · NR Zone ·{' '}
-            {CONFLICTS > 0 && (
-              <span className="text-negative font-medium">{CONFLICTS} conflicts require attention</span>
+            {TOTAL_CONFLICTS > 0 && (
+              <span className="text-negative font-medium">{TOTAL_CONFLICTS} conflicts require attention</span>
             )}
           </p>
         </div>
@@ -254,11 +285,11 @@ export default function RequestsPageClient() {
       )}
 
       {/* Conflict Alert */}
-      {CONFLICTS > 0 && (
+      {TOTAL_CONFLICTS > 0 && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-negative-tint border border-negative/25">
           <AlertTriangle size={16} className="text-negative shrink-0" />
           <p className="text-sm text-foreground">
-            <span className="font-semibold">{CONFLICTS} maintenance blocks</span> have train conflicts.
+            <span className="font-semibold">{TOTAL_CONFLICTS} maintenance blocks</span> have train conflicts.
             Review and resolve before the next operating window.
           </p>
           <button className="btn-ghost text-xs text-negative ml-auto" onClick={() => setStatusFilter('Conflict')}>
@@ -268,11 +299,11 @@ export default function RequestsPageClient() {
       )}
 
       {/* Split Alert */}
-      {SPLITS > 0 && (
+      {TOTAL_SPLITS > 0 && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-accent/10 border border-accent/25">
           <SplitIcon size={16} className="text-accent shrink-0" />
           <p className="text-sm text-foreground">
-            <span className="font-semibold">{SPLITS} maintenance blocks</span> were split across multiple
+            <span className="font-semibold">{TOTAL_SPLITS} maintenance blocks</span> were split across multiple
             windows because no single slot was free.
           </p>
           <button className="btn-ghost text-xs text-accent ml-auto" onClick={() => setStatusFilter('Split')}>
@@ -339,9 +370,9 @@ export default function RequestsPageClient() {
             style={{ width: 130 }}
           >
             <option value="All">All Statuses</option>
-            {ALL_STATUSES.filter((s) => !isArchived(s)).map((s) => (
-              <option key={s} value={s}>
-                {s}
+            {ALL_STATUSES.filter((s) => !isArchived(s as string)).map((s) => (
+              <option key={s as string} value={s as string}>
+                {s as string}
               </option>
             ))}
           </select>
@@ -429,8 +460,8 @@ export default function RequestsPageClient() {
                   <tr
                     key={req.id}
                     className={`table-row-hover ${selectedIds.has(req.id) ? 'bg-primary/5' : ''} ${
-                      req.status === 'Conflict' ? 'bg-negative-tint/20' : ''
-                    } ${req.status === 'Split' ? 'bg-accent/5' : ''}`}
+                      (req.status as string) === 'Conflict' ? 'bg-negative-tint/20' : ''
+                    } ${(req.status as string) === 'Split' ? 'bg-accent/5' : ''}`}
                   >
                     <td className="px-3 py-2.5">
                       <button onClick={() => toggleRow(req.id)} className="text-muted-foreground hover:text-foreground">
@@ -451,7 +482,7 @@ export default function RequestsPageClient() {
                           <span className="text-2xs text-negative">vs {req.conflictsWith}</span>
                         </div>
                       )}
-                      {req.status === 'Split' && (
+                      {(req.status as string) === 'Split' && (
                         <div className="flex items-center gap-1 mt-0.5">
                           <SplitIcon size={10} className="text-accent" />
                           <span className="text-2xs text-accent">multi-window</span>
@@ -495,14 +526,14 @@ export default function RequestsPageClient() {
                     <td className="px-3 py-2.5">
                       {canChangeStatus ? (
                         <select
-                          value={req.status}
+                          value={req.status as string}
                           onChange={(e) => updateStatus(req.id, e.target.value as Status)}
                           className="select-field text-xs"
                           style={{ width: 130 }}
                         >
                           {ALL_STATUSES.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
+                            <option key={s as string} value={s as string}>
+                              {s as string}
                             </option>
                           ))}
                         </select>
@@ -650,7 +681,7 @@ export default function RequestsPageClient() {
               </thead>
               <tbody className="divide-y divide-border/20 text-muted-foreground">
                 {historyRequests.map((req) => {
-                  const isCompleted = req.status?.toUpperCase() === 'COMPLETED';
+                  const isCompleted = (req.status as string)?.toUpperCase() === 'COMPLETED';
                   return (
                     <tr key={req.id} className="hover:bg-muted/10 transition-colors opacity-80 hover:opacity-100">
                       <td className="px-3 py-2.5 font-mono-data text-xs text-foreground/80 font-semibold line-through">
