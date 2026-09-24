@@ -1,11 +1,8 @@
 import type { TrainMovement, MaintenanceRequest } from './solver';
 
 /**
- * Deliberately realistic baseline: each train's normal window ends only
- * 10–20 minutes before its paired maintenance block starts. Under
- * normal conditions there's no conflict. Adding a delay of ~20-30+ min
- * to the train pushes its interval into the block's window, giving the
- * solver something real to resolve — which is the point of the demo.
+ * Baseline schedules for live demo.
+ * Tracks included: GZB-ALD, NDLS-AGC, MTJ-CNB, GZB-HPU, SRE-MZN, MZN-MTC.
  */
 
 export const BASE_TRAINS: TrainMovement[] = [
@@ -43,7 +40,7 @@ export const BASE_REQUESTS: MaintenanceRequest[] = [
     dept: 'Civil',
     priority: 'High',
     durationMins: 190,
-    preferredStart: 410, // 06:50 — 20 min buffer after train 12559
+    preferredStart: 410, // 06:50
     preferredEnd: 600,
   },
   {
@@ -53,7 +50,7 @@ export const BASE_REQUESTS: MaintenanceRequest[] = [
     dept: 'Civil',
     priority: 'Critical',
     durationMins: 180,
-    preferredStart: 465, // 07:45 — 15 min buffer after train 12050
+    preferredStart: 465, // 07:45
     preferredEnd: 645,
   },
   {
@@ -63,7 +60,37 @@ export const BASE_REQUESTS: MaintenanceRequest[] = [
     dept: 'S&T',
     priority: 'High',
     durationMins: 150,
-    preferredStart: 585, // 09:45 — 15 min buffer after train 12216
+    preferredStart: 585, // 09:45
     preferredEnd: 735,
+  },
+  {
+    id: 'DEMO-OHE-019',
+    segmentId: 'GZB–HPU',
+    lineType: 'UP',
+    dept: 'OHE',
+    priority: 'High',
+    durationMins: 120,
+    preferredStart: 520, // 08:40
+    preferredEnd: 640,
+  },
+  {
+    id: 'DEMO-Civil-051',
+    segmentId: 'SRE–MZN',
+    lineType: 'UP',
+    dept: 'Civil',
+    priority: 'Critical',
+    durationMins: 140,
+    preferredStart: 640, // 10:40
+    preferredEnd: 780,
+  },
+  {
+    id: 'DEMO-ST-022',
+    segmentId: 'MZN–MTC',
+    lineType: 'DOWN',
+    dept: 'S&T',
+    priority: 'Medium',
+    durationMins: 110,
+    preferredStart: 720, // 12:00
+    preferredEnd: 830,
   },
 ];
