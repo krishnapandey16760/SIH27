@@ -22,7 +22,7 @@ interface FormData {
 
 const NR_STATIONS = [
   'NDLS', 'DLI', 'GZB', 'SBB', 'MTJ', 'AGC', 'ALD', 'CNB', 'LKO',
-  'GKP', 'VNS', 'MGS', 'PNP', 'HW', 'KKDE', 'AMB', 'CDG', 'FZR','FZP','FDK','PBH','JNU','ZBD','MB','KGB','LKO','RBL','UCR','SLN','AY','ABP','UMB','YJUD','SRE','TPZ','DBD','MZN'];
+  'GKP', 'VNS', 'MGS', 'PNP', 'HW', 'KKDE', 'AMB', 'CDG', 'FZR','FZP','FDK','PBH','JNU','ZBD','MB','KGB','LKO','RBL','UCR','SLN','AY','ABP','UMB','YJUD','SRE','TPZ','DBD','MZN','MTC','HPU'];
 
 export default function NewRequestModal({
   open,
