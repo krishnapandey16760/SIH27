@@ -1,54 +1,122 @@
-import { REQUESTS as SEED_REQUESTS, type UIMaintenanceRequest, type Status } from './maintenanceRequests';
+import { type UIMaintenanceRequest, type Status } from './maintenanceRequests';
 
-const STORAGE_KEY = 'railblock_maintenance_requests';
+let memoryCache: UIMaintenanceRequest[] = [];
 
-function isBrowser() {
-  return typeof window !== 'undefined';
-}
-
-export function loadRequests(): UIMaintenanceRequest[] {
-  if (!isBrowser()) return SEED_REQUESTS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_REQUESTS));
-      return SEED_REQUESTS;
-    }
-    return JSON.parse(raw) as UIMaintenanceRequest[];
-  } catch {
-    return SEED_REQUESTS;
+function notifyUpdated() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('maintenance-requests-updated'));
   }
 }
 
-export function saveRequests(requests: UIMaintenanceRequest[]) {
-  if (!isBrowser()) return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(requests));
-  // Notify any mounted hook instances (e.g. Gantt + table open at once) to re-read.
-  window.dispatchEvent(new CustomEvent('maintenance-requests-updated'));
+export function getCachedRequests(): UIMaintenanceRequest[] {
+  return memoryCache;
 }
 
-export function addRequest(request: UIMaintenanceRequest): UIMaintenanceRequest[] {
-  const updated = [request, ...loadRequests()];
-  saveRequests(updated);
-  return updated;
+export async function fetchRequestsFromDB(): Promise<UIMaintenanceRequest[]> {
+  try {
+    const res = await fetch('/api/requests', { cache: 'no-store' });
+    if (!res.ok) return memoryCache;
+    const data = await res.json();
+    if (Array.isArray(data.requests)) {
+      memoryCache = data.requests;
+    }
+    return memoryCache;
+  } catch {
+    return memoryCache;
+  }
 }
 
-export function updateRequestStatus(id: string, status: Status): UIMaintenanceRequest[] {
-  const updated = loadRequests().map((r) => (r.id === id ? { ...r, status } : r));
-  saveRequests(updated);
-  return updated;
+export function loadRequests(): UIMaintenanceRequest[] {
+  return memoryCache;
 }
 
-export function resetToSeed(): UIMaintenanceRequest[] {
-  saveRequests(SEED_REQUESTS);
-  return SEED_REQUESTS;
+export async function saveRequests(requests: UIMaintenanceRequest[]): Promise<UIMaintenanceRequest[]> {
+  memoryCache = requests;
+  notifyUpdated();
+  return memoryCache;
 }
 
-/**
- * Requests that still need track time — excludes Completed/Cancelled work,
- * which should no longer occupy a slot on the Gantt chart or be sent to
- * the solver. This is what fixes "completed request still shows on Gantt".
- */
+export async function addRequest(request: UIMaintenanceRequest): Promise<UIMaintenanceRequest[]> {
+  try {
+    const res = await fetch('/api/requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const created: UIMaintenanceRequest = data.request ?? request;
+      memoryCache = [created, ...memoryCache.filter((r) => r.id !== created.id)];
+      notifyUpdated();
+      return memoryCache;
+    }
+  } catch {
+    // fallback to optimistic update if backend is temporarily unreachable
+  }
+  memoryCache = [request, ...memoryCache];
+  notifyUpdated();
+  return memoryCache;
+}
+
+export async function updateRequestStatus(id: string, status: Status): Promise<UIMaintenanceRequest[]> {
+  try {
+    const res = await fetch(`/api/requests/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const updatedItem: UIMaintenanceRequest | undefined = data.request;
+      memoryCache = memoryCache.map((r) =>
+        r.id === id || r.requestId === id ? (updatedItem ?? { ...r, status }) : r
+      );
+      notifyUpdated();
+      return memoryCache;
+    }
+  } catch {
+    // fallback optimistic update
+  }
+  memoryCache = memoryCache.map((r) => (r.id === id ? { ...r, status } : r));
+  notifyUpdated();
+  return memoryCache;
+}
+
+export async function deleteRequestFromDB(id: string): Promise<UIMaintenanceRequest[]> {
+  try {
+    await fetch(`/api/requests/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch {
+    // ignore network error
+  }
+  memoryCache = memoryCache.filter((r) => r.id !== id && r.requestId !== id);
+  notifyUpdated();
+  return memoryCache;
+}
+
+export async function resetToSeed(): Promise<UIMaintenanceRequest[]> {
+  try {
+    const res = await fetch('/api/requests/reset', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.requests)) {
+        memoryCache = data.requests;
+        notifyUpdated();
+        return memoryCache;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  memoryCache = [];
+  notifyUpdated();
+  return memoryCache;
+}
+
 export function loadActiveRequests(): UIMaintenanceRequest[] {
-  return loadRequests().filter((r) => r.status !== 'Completed' && r.status !== 'Cancelled');
+  return memoryCache.filter((r) => r.status !== 'Completed' && r.status !== 'Cancelled');
+}
+
+export async function loadActiveRequestsFromDB(): Promise<UIMaintenanceRequest[]> {
+  const all = await fetchRequestsFromDB();
+  return all.filter((r) => r.status !== 'Completed' && r.status !== 'Cancelled');
 }

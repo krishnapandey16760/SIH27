@@ -3,17 +3,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Train, RotateCcw, AlertTriangle, CheckCircle, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatMin, type ScheduledBlock } from '@/lib/solver';
-import { BASE_TRAINS, BASE_REQUESTS } from '@/lib/liveTrainData';
+import { formatMin, type ScheduledBlock, type MaintenanceRequest } from '@/lib/solver';
+import { BASE_TRAINS } from '@/lib/liveTrainData';
+import { toSolverRequests } from '@/lib/maintenanceRequests';
+import { useMaintenanceRequests } from '@/lib/useMaintenanceRequests';
 import { solveScheduleRemote } from '@/lib/solverClient';
 import { useDashboard } from '@/context/DashboardContext';
 
 export default function LiveTrainTracker() {
   const { trainDelays, setTrainDelay, resetTrainDelays } = useDashboard();
+  const { requests: dbRequests } = useMaintenanceRequests();
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [results, setResults] = useState<ScheduledBlock[]>([]);
   const [loading, setLoading] = useState(false);
   const [usedFallback, setUsedFallback] = useState(false);
+
+  const activeSolverRequests: MaintenanceRequest[] = useMemo(() => {
+    const active = dbRequests.filter(
+      (r) => r.status !== 'Completed' && r.status !== 'Cancelled'
+    );
+    return toSolverRequests(active);
+  }, [dbRequests]);
 
   const effectiveTrains = useMemo(
     () =>
@@ -24,11 +34,15 @@ export default function LiveTrainTracker() {
     [trainDelays]
   );
 
-  // Re-solve whenever delays change — same shared state the Gantt chart reads.
   useEffect(() => {
     let cancelled = false;
+    if (activeSolverRequests.length === 0) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    solveScheduleRemote(effectiveTrains, BASE_REQUESTS, false).then((res) => {
+    solveScheduleRemote(effectiveTrains, activeSolverRequests, false).then((res) => {
       if (cancelled) return;
       setResults(res.blocks);
       setUsedFallback(res.engine === 'local-fallback');
@@ -37,11 +51,11 @@ export default function LiveTrainTracker() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveTrains]);
+  }, [effectiveTrains, activeSolverRequests]);
 
   const resultFor = (requestId: string) => results.find((r) => r.requestId === requestId);
 
-  const applyDelay = async (trainNumber: string, trainName: string, requestId: string) => {
+  const applyDelay = async (trainNumber: string, trainName: string, requestId?: string) => {
     const raw = inputs[trainNumber];
     const mins = parseInt(raw, 10);
     if (isNaN(mins) || mins < 0) {
@@ -49,14 +63,20 @@ export default function LiveTrainTracker() {
       return;
     }
 
+    if (!requestId || activeSolverRequests.length === 0) {
+      setTrainDelay(trainNumber, mins);
+      toast.info(`${trainName} delayed ${mins} min — no active maintenance blocks on this segment`);
+      return;
+    }
+
     const before = resultFor(requestId);
     const newTrains = BASE_TRAINS.map((t) =>
       t.trainNumber === trainNumber ? { ...t, startMin: t.startMin + mins, endMin: t.endMin + mins } : t
     );
-    const { blocks: after, engine } = await solveScheduleRemote(newTrains, BASE_REQUESTS, false);
+    const { blocks: after, engine } = await solveScheduleRemote(newTrains, activeSolverRequests, false);
     const afterBlock = after.find((r) => r.requestId === requestId);
 
-    setTrainDelay(trainNumber, mins); // this is what makes the Gantt chart update too
+    setTrainDelay(trainNumber, mins);
 
     if (afterBlock?.status === 'Conflict') {
       toast.error(`${trainName} delayed ${mins} min — ${requestId} could not be rescheduled`, {
@@ -77,7 +97,10 @@ export default function LiveTrainTracker() {
     toast.info('All trains reset to on-time schedule');
   };
 
-  const pairs = BASE_TRAINS.map((t, i) => ({ train: t, request: BASE_REQUESTS[i] }));
+  const pairs = BASE_TRAINS.map((t) => ({
+    train: t,
+    request: activeSolverRequests.find((r) => r.segmentId === t.segmentId && r.lineType === t.lineType),
+  }));
 
   return (
     <div className="card-surface overflow-hidden">
@@ -99,7 +122,7 @@ export default function LiveTrainTracker() {
       <div className="divide-y divide-border/40">
         {pairs.map(({ train, request }) => {
           const delay = trainDelays[train.trainNumber] || 0;
-          const result = resultFor(request.id);
+          const result = request ? resultFor(request.id) : undefined;
           const isConflict = result?.status === 'Conflict';
           const isShifted = result?.status === 'Shifted';
 
@@ -131,31 +154,35 @@ export default function LiveTrainTracker() {
                 />
                 <button
                   className="btn-secondary text-xs"
-                  onClick={() => applyDelay(train.trainNumber, train.trainName, request.id)}
+                  onClick={() => applyDelay(train.trainNumber, train.trainName, request?.id)}
                 >
                   <Clock size={12} />
                   Apply Delay
                 </button>
               </div>
 
-              <div className="flex items-start gap-2 pt-1">
-                {isConflict ? (
-                  <AlertTriangle size={13} className="text-negative mt-0.5 shrink-0" />
-                ) : (
-                  <CheckCircle size={13} className="text-positive mt-0.5 shrink-0" />
-                )}
-                <div className="text-xs">
-                  <span className="font-semibold text-foreground">{request.id}</span>{' '}
-                  <span className="text-muted-foreground">({request.dept} · {request.priority})</span>
-                  {result && (
-                    <p className={isConflict ? 'text-negative' : isShifted ? 'text-warning' : 'text-muted-foreground'}>
-                      {isConflict
-                        ? `Conflict — ${result.reason}`
-                        : `Scheduled ${formatMin(result.startMin)}–${formatMin(result.endMin)}${isShifted ? ' (auto-shifted)' : ''}`}
-                    </p>
+              {request ? (
+                <div className="flex items-start gap-2 pt-1">
+                  {isConflict ? (
+                    <AlertTriangle size={13} className="text-negative mt-0.5 shrink-0" />
+                  ) : (
+                    <CheckCircle size={13} className="text-positive mt-0.5 shrink-0" />
                   )}
+                  <div className="text-xs">
+                    <span className="font-semibold text-foreground">{request.id}</span>{' '}
+                    <span className="text-muted-foreground">({request.dept} · {request.priority})</span>
+                    {result && (
+                      <p className={isConflict ? 'text-negative' : isShifted ? 'text-warning' : 'text-muted-foreground'}>
+                        {isConflict
+                          ? `Conflict — ${result.reason}`
+                          : `Scheduled ${formatMin(result.startMin)}–${formatMin(result.endMin)}${isShifted ? ' (auto-shifted)' : ''}`}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <p className="text-2xs text-muted-foreground pt-1">No active maintenance block on {train.segmentId}</p>
+              )}
             </div>
           );
         })}

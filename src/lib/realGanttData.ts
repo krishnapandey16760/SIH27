@@ -1,8 +1,8 @@
 import type { SegmentRow, Bar } from './dashboardData';
 import type { TrainMovement, LineType, MaintenanceRequest } from './solver';
 import { toSolverRequests } from './maintenanceRequests';
-import { loadActiveRequests } from './maintenanceRequestsStore';
-import { BASE_TRAINS, BASE_REQUESTS } from './liveTrainData';
+import { loadActiveRequestsFromDB } from './maintenanceRequestsStore';
+import { BASE_TRAINS } from './liveTrainData';
 import { solveScheduleRemote, type SolverEngine } from './solverClient';
 
 export interface RealGanttResult {
@@ -40,7 +40,7 @@ const isInactive = (status?: string): boolean => {
 };
 
 /**
- * Builds Gantt rows strictly contextual to active maintenance blocks:
+ * Builds Gantt rows strictly contextual to active maintenance blocks from DB:
  * 1. If 0 active blocks exist, returns empty rows (idle track operating normally).
  * 2. If blocks exist, only shows trains on the affected segments within +/- 2 hours
  *    of the maintenance window.
@@ -49,28 +49,23 @@ export async function buildRealGanttRows(
   trainDelays: Record<string, number> = {},
   userRequests?: any[]
 ): Promise<RealGanttResult> {
-  // 1. Get active requests (strictly exclude COMPLETED, CANCELLED, and REJECTED)
+  // 1. Get active requests strictly from DB (or passed userRequests), excluding COMPLETED, CANCELLED, REJECTED
   let activeStoreRequests: any[] = [];
   if (userRequests && Array.isArray(userRequests)) {
-    activeStoreRequests = userRequests.filter(
-      (r) => !isInactive(r.status)
-    );
+    activeStoreRequests = userRequests.filter((r) => !isInactive(r.status));
   } else {
-    activeStoreRequests = loadActiveRequests().filter(
-      (r) => !isInactive(r.status)
-    );
+    const dbActive = await loadActiveRequestsFromDB();
+    activeStoreRequests = dbActive.filter((r) => !isInactive(r.status));
   }
 
-  // 2. Return clean empty state if no active requests exist
+  // 2. Return clean empty state if no active requests exist in DB
   if (activeStoreRequests.length === 0) {
     return { rows: [], engine: 'local-fallback' };
   }
 
-  const csvRequests = toSolverRequests(activeStoreRequests);
-  const allRequests: MaintenanceRequest[] =
-    userRequests !== undefined ? csvRequests : [...csvRequests, ...BASE_REQUESTS];
+  const allRequests: MaintenanceRequest[] = toSolverRequests(activeStoreRequests);
 
-  const uniqueSegments = Array.from(new Set(csvRequests.map((r) => r.segmentId)));
+  const uniqueSegments = Array.from(new Set(allRequests.map((r) => r.segmentId)));
   const csvTrainsPerSegment = await Promise.all(uniqueSegments.map(fetchTrainMovements));
   const csvTrains = csvTrainsPerSegment.flat();
 
@@ -101,7 +96,6 @@ export async function buildRealGanttRows(
     if (!maintenanceWindows.has(key)) {
       maintenanceWindows.set(key, []);
     }
-    // +/- 2 hours bounds (120 minutes)
     maintenanceWindows.get(key)!.push({
       start: Math.max(0, b.startMin - TWO_HOURS_MIN),
       end: Math.min(1440, b.endMin + TWO_HOURS_MIN),
