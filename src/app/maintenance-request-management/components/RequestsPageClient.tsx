@@ -35,6 +35,7 @@ import { useRole } from '@/context/RoleContext';
 import RoleSwitcher from '../../components/RoleSwitcher';
 import { type UIMaintenanceRequest, type Status } from '@/lib/maintenanceRequests';
 import { useMaintenanceRequests } from '@/lib/useMaintenanceRequests';
+import { patchRequestInDB } from '@/lib/maintenanceRequestsStore';
 
 type SortKey = keyof UIMaintenanceRequest;
 
@@ -66,7 +67,7 @@ export default function RequestsPageClient() {
   const { role } = useRole();
   const canChangeStatus = role === 'Sr. Divisional Engineer';
 
-  const { requests, addRequest, updateStatus: updateStatusStore, setRequests } = useMaintenanceRequests();
+  const { requests, refresh, addRequest, updateStatus: updateStatusStore, setRequests } = useMaintenanceRequests();
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('All');
   const [priorityFilter, setPriorityFilter] = useState<string>('All');
@@ -99,21 +100,14 @@ export default function RequestsPageClient() {
     }
   };
 
-  const applyWindow = (id: string, window: { startMin: number; endMin: number }) => {
+  const applyWindow = async (id: string, window: { startMin: number; endMin: number }) => {
     const target = requests.find((r) => r.id === id);
-    setRequests(
-      requests.map((r) =>
-        r.id === id
-          ? ({
-              ...r,
-              status: 'Scheduled' as Status,
-              preferredStart: minutesToClock(window.startMin),
-              preferredEnd: minutesToClock(window.endMin),
-              adminResolution: undefined,
-            } as UIMaintenanceRequest)
-          : r
-      )
-    );
+    const updated = await patchRequestInDB(id, {
+      status: 'Scheduled' as Status,
+      preferredStart: minutesToClock(window.startMin),
+      preferredEnd: minutesToClock(window.endMin),
+    });
+    setRequests(updated);
     toast.success(`Applied suggested window to ${target?.requestId ?? id}`, {
       description: `${minutesToClock(window.startMin)} – ${minutesToClock(window.endMin)}`,
     });
@@ -131,11 +125,10 @@ export default function RequestsPageClient() {
     }
   };
 
-  const bumpRequest = (id: string, blockingRequestId: string) => {
+  const bumpRequest = async (id: string, blockingRequestId: string) => {
     const target = requests.find((r) => r.id === id);
-    setRequests(
-      requests.map((r) => (r.id === blockingRequestId ? { ...r, status: 'Pending' as Status } : r))
-    );
+    const updated = await patchRequestInDB(blockingRequestId, { status: 'Pending' as Status });
+    setRequests(updated);
     toast.info(`${blockingRequestId} moved back to Pending to free up space for ${target?.requestId ?? id}`, {
       description: 'Re-run optimization so both requests get a fresh, valid schedule.',
     });
@@ -212,19 +205,21 @@ export default function RequestsPageClient() {
     else setSelectedIds(new Set(paginated.map((r) => r.id)));
   };
 
-  const handleBulkApprove = () => {
-    setRequests(
-      requests.map((r) => (selectedIds.has(r.id) ? { ...r, status: 'Scheduled' as Status } : r))
-    );
-    toast.success(`${selectedIds.size} requests approved and queued for block assignment`);
+  const handleBulkApprove = async () => {
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      await updateStatusStore(id, 'Scheduled' as Status);
+    }
+    toast.success(`${ids.length} requests approved and queued for block assignment`);
     setSelectedIds(new Set());
   };
 
-  const handleBulkReject = () => {
-    setRequests(
-      requests.map((r) => (selectedIds.has(r.id) ? { ...r, status: 'Cancelled' as Status } : r))
-    );
-    toast.error(`${selectedIds.size} requests cancelled and archived to Request History`);
+  const handleBulkReject = async () => {
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      await updateStatusStore(id, 'Cancelled' as Status);
+    }
+    toast.error(`${ids.length} requests cancelled and archived to Request History`);
     setSelectedIds(new Set());
   };
 
@@ -262,7 +257,13 @@ export default function RequestsPageClient() {
         </div>
         <div className="flex items-center gap-2">
           <RoleSwitcher />
-          <button className="btn-secondary text-sm" onClick={() => toast.info('Refreshing requests…')}>
+          <button
+            className="btn-secondary text-sm"
+            onClick={async () => {
+              await refresh();
+              toast.success('Requests synced with database');
+            }}
+          >
             <RefreshCw size={13} />
             Refresh
           </button>
@@ -767,8 +768,8 @@ export default function RequestsPageClient() {
         <NewRequestModal
           open={showNewModal}
           onClose={() => setShowNewModal(false)}
-          onCreate={(newReq) => {
-            addRequest(newReq);
+          onCreate={async (newReq) => {
+            await addRequest(newReq);
             setShowNewModal(false);
           }}
         />

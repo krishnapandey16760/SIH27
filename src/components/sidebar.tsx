@@ -1,10 +1,20 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import AppLogo from './ui/applogo';
-import { LayoutDashboard, ClipboardList, Network, ChevronLeft, ChevronRight, Settings, HelpCircle, Activity, Train, AlertTriangle,  } from 'lucide-react';
+import {
+  LayoutDashboard,
+  ClipboardList,
+  Network,
+  ChevronLeft,
+  ChevronRight,
+  Settings,
+  HelpCircle,
+  Train,
+} from 'lucide-react';
+import { useMaintenanceRequests } from '@/lib/useMaintenanceRequests';
 
 interface NavItem {
   id: string;
@@ -28,7 +38,6 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Maintenance Requests',
     href: '/maintenance-request-management',
     icon: <ClipboardList size={18} />,
-    badge: 7,
     group: 'Planning',
   },
   {
@@ -45,13 +54,6 @@ const NAV_ITEMS: NavItem[] = [
     icon: <Train size={18} />,
     group: 'Visualization',
   },
-  // {
-  //   id: 'nav-activity',
-  //   label: 'Activity Log',
-  //   href: '#',
-  //   icon: <Activity size={18} />,
-  //   group: 'Monitoring',
-  // },
 ];
 
 const GROUPS = ['Planning', 'Visualization'];
@@ -63,6 +65,14 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { requests } = useMaintenanceRequests();
+
+  const activeRequestCount = useMemo(() => {
+    return requests.filter((r) => {
+      const status = r.status?.toUpperCase();
+      return status !== 'COMPLETED' && status !== 'CANCELLED' && status !== 'REJECTED';
+    }).length;
+  }, [requests]);
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -105,30 +115,39 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   {group}
                 </p>
               )}
-              {items.map((item) => (
-                <Link
-                  key={item.id}
-                  href={item.href}
-                  title={collapsed ? item.label : undefined}
-                  className={`sidebar-nav-item mb-0.5 ${isActive(item.href) ? 'active' : ''}`}
-                  style={{ justifyContent: collapsed ? 'center' : 'flex-start' }}
-                >
-                  <span className="shrink-0">{item.icon}</span>
-                  {!collapsed && (
-                    <>
-                      <span className="flex-1 truncate">{item.label}</span>
-                      {item.badge !== undefined && (
-                        <span className="shrink-0 text-2xs font-bold px-1.5 py-0.5 rounded-full bg-primary/20 text-primary">
-                          {item.badge}
-                        </span>
-                      )}
-                    </>
-                  )}
-                  {collapsed && item.badge !== undefined && (
-                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-primary" />
-                  )}
-                </Link>
-              ))}
+              {items.map((item) => {
+                const liveBadge =
+                  item.id === 'nav-requests'
+                    ? activeRequestCount > 0
+                      ? activeRequestCount
+                      : undefined
+                    : item.badge;
+
+                return (
+                  <Link
+                    key={item.id}
+                    href={item.href}
+                    title={collapsed ? item.label : undefined}
+                    className={`sidebar-nav-item relative mb-0.5 ${isActive(item.href) ? 'active' : ''}`}
+                    style={{ justifyContent: collapsed ? 'center' : 'flex-start' }}
+                  >
+                    <span className="shrink-0">{item.icon}</span>
+                    {!collapsed && (
+                      <>
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {liveBadge !== undefined && (
+                          <span className="shrink-0 text-2xs font-bold px-1.5 py-0.5 rounded-full bg-primary/20 text-primary">
+                            {liveBadge}
+                          </span>
+                        )}
+                      </>
+                    )}
+                    {collapsed && liveBadge !== undefined && (
+                      <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary" />
+                    )}
+                  </Link>
+                );
+              })}
             </div>
           );
         })}

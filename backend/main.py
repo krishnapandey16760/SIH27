@@ -18,6 +18,11 @@ from solver.milp_solver import solve_milp
 from solver.ga_refiner import refine_with_ga
 
 app = FastAPI(title="RailBlock Optimization Engine")
+from database import engine, Base
+from requests_router import router as requests_router
+
+Base.metadata.create_all(bind=engine)
+app.include_router(requests_router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import Modal from '@/components/ui/modal';
 import { Loader2 } from 'lucide-react';
 import type { UIMaintenanceRequest } from '@/lib/maintenanceRequests';
+import { addRequest as addRequestToStore } from '@/lib/maintenanceRequestsStore';
 
 interface FormData {
   fromStation: string;
@@ -20,9 +21,15 @@ interface FormData {
   notes: string;
 }
 
-const NR_STATIONS = [
-  'NDLS', 'DLI', 'GZB', 'SBB', 'MTJ', 'AGC', 'ALD', 'CNB', 'LKO',
-  'GKP', 'VNS', 'MGS', 'PNP', 'HW', 'KKDE', 'AMB', 'CDG', 'FZR','FZP','FDK','PBH','JNU','ZBD','MB','KGB','LKO','RBL','UCR','SLN','AY','ABP','UMB','YJUD','SRE','TPZ','DBD','MZN','MTC','HPU'];
+const NR_STATIONS = Array.from(
+  new Set([
+    'NDLS', 'DLI', 'GZB', 'SBB', 'MTJ', 'AGC', 'ALD', 'CNB', 'LKO',
+    'GKP', 'VNS', 'MGS', 'PNP', 'HW', 'KKDE', 'AMB', 'CDG', 'FZR',
+    'FZP', 'FDK', 'PBH', 'JNU', 'ZBD', 'MB', 'KGB', 'RBL', 'UCR',
+    'SLN', 'AY', 'ABP', 'UMB', 'YJUD', 'SRE', 'TPZ', 'DBD', 'MZN',
+    'MTC', 'HPU',
+  ])
+);
 
 export default function NewRequestModal({
   open,
@@ -31,7 +38,7 @@ export default function NewRequestModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate?: (request: UIMaintenanceRequest) => void;
+  onCreate?: (request: UIMaintenanceRequest) => void | Promise<void>;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const {
@@ -41,17 +48,15 @@ export default function NewRequestModal({
     formState: { errors },
   } = useForm<FormData>();
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = async (data: FormData) => {
     setSubmitting(true);
-    // Backend integration (future): POST /api/maintenance-requests { ...data, zone: 'NR' }
-    setTimeout(() => {
-      setSubmitting(false);
+    try {
       const requestId = `MR-2026-${Math.floor(Math.random() * 9000 + 1000)}`;
 
       const newRequest: UIMaintenanceRequest = {
         id: `req-${Date.now()}`,
         requestId,
-        segment: `${data.fromStation}–${data.toStation}`, // en-dash, matches convention used elsewhere
+        segment: `${data.fromStation}–${data.toStation}`,
         fromStation: data.fromStation,
         toStation: data.toStation,
         lineType: data.lineType as UIMaintenanceRequest['lineType'],
@@ -61,15 +66,29 @@ export default function NewRequestModal({
         preferredEnd: data.preferredEnd,
         priority: data.priority as UIMaintenanceRequest['priority'],
         requestedBy: data.requestedBy,
-        submittedAt: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        submittedAt: new Date().toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
         status: 'Pending',
       };
 
-      onCreate?.(newRequest);
-      toast.success(`Maintenance request submitted — ${requestId}`);
+      if (onCreate) {
+        await onCreate(newRequest);
+      } else {
+        await addRequestToStore(newRequest);
+      }
+
+      toast.success(`Maintenance request saved to database — ${requestId}`);
       reset();
       onClose();
-    }, 1000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save maintenance request';
+      toast.error(message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
