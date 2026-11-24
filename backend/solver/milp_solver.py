@@ -1,38 +1,25 @@
 """
-Real constraint solver using Google OR-Tools CP-SAT.
+Constraint solver using Google OR-Tools CP-SAT.
 
-Enhanced with:
-1. STRICT SAME-SEGMENT CORRIDOR ALIGNMENT (UP == DOWN)
-2. COMMON JUNCTION PRE-ANCHORING (Consolidated Mega-Blocks)
-- Groups by physical segmentId.
-- Enforces start_var(UP) == start_var(DOWN) on the same segment.
-- Pre-anchors requests sharing a common railway junction into a synchronized window.
+Core goals:
+1. Maximum asset availability (synchronizes UP & DOWN blocks on the same segment when feasible,
+   with zero block-to-block overlap on any track).
+2. Zero train collision on static train data across the 24-hour (1440-min) timeline,
+   respecting urgency (priority) and preferredStart.
+3. Minimum-train fallback: if no zero-train slot exists in 24 hours, schedules in the
+   block-free slot with the fewest overlapping trains closest to preferredStart.
 """
 
 from collections import defaultdict
 from ortools.sat.python import cp_model
 
 PRIORITY_WEIGHT = {"Critical": 100, "High": 50, "Medium": 20, "Low": 5}
-TRAFFIC_WEIGHT = {"Critical": 6, "High": 4, "Medium": 2, "Low": 1}
 DAY_MINUTES = 1440
 FULL_SOLVE_TIME_LIMIT = 5.0
-ISOLATION_TIME_LIMIT = 2.0
-MIN_SPLIT_PART_MINS = 30
-MAX_SPLIT_PARTS = 3
 
 
-def _traffic_density_curve(trains_data, day_minutes=DAY_MINUTES, smoothing_mins=45):
-    density = [0] * day_minutes
-    for t in trains_data:
-        s = max(0, t["startMin"] - smoothing_mins)
-        e = min(day_minutes, t["endMin"] + smoothing_mins)
-        for m in range(s, e):
-            density[m] += 1
-    return density
-
-
-def _find_free_windows(fixed_intervals, duration, day_minutes=DAY_MINUTES):
-    occupied = sorted((iv["startMin"], iv["endMin"]) for iv in fixed_intervals)
+def _find_free_windows(fixed_intervals: list[tuple[int, int]], duration: int, day_minutes: int = DAY_MINUTES):
+    occupied = sorted((max(0, s), min(day_minutes, e)) for s, e in fixed_intervals)
     free = []
     cursor = 0
     for s, e in occupied:
@@ -44,98 +31,76 @@ def _find_free_windows(fixed_intervals, duration, day_minutes=DAY_MINUTES):
     return free
 
 
-def _find_single_slot(fixed_intervals, req, day_minutes=DAY_MINUTES):
+def _find_zero_train_slot(fixed_intervals: list[tuple[int, int]], req: dict, day_minutes: int = DAY_MINUTES):
     dur = req["durationMins"]
     gaps = _find_free_windows(fixed_intervals, dur, day_minutes)
     if not gaps:
         return None
-    best_start, best_score = None, None
-    anchor = req.get("targetAnchor", req["preferredStart"])
+
+    best_start, best_dist = None, None
+    pref = req["preferredStart"]
     for gs, ge in gaps:
-        candidate = min(max(anchor, gs), ge - dur)
-        score = abs(candidate - anchor)
-        if best_score is None or score < best_score:
-            best_score, best_start = score, candidate
+        candidate = min(max(pref, gs), ge - dur)
+        dist = abs(candidate - pref)
+        if best_dist is None or dist < best_dist:
+            best_dist, best_start = dist, candidate
     return best_start
 
 
-def _try_duration_split(
-    fixed_intervals,
-    req,
-    day_minutes=DAY_MINUTES,
-    max_parts=MAX_SPLIT_PARTS,
-    min_part_mins=MIN_SPLIT_PART_MINS,
-):
-    dur = req["durationMins"]
-    if dur <= min_part_mins:
-        return None
-
-    gaps = _find_free_windows(fixed_intervals, min_part_mins, day_minutes)
-    if len(gaps) < 2:
-        return None
-
-    anchor = req.get("targetAnchor", req["preferredStart"])
-    gaps_sorted = sorted(
-        gaps,
-        key=lambda g: min(abs(g[0] - anchor), abs(g[1] - anchor)),
-    )
-
-    remaining = dur
-    pieces = []
-    for gs, ge in gaps_sorted:
-        if remaining <= 0 or len(pieces) >= max_parts:
-            break
-        take = min(ge - gs, remaining)
-        if take < min_part_mins:
-            continue
-        pieces.append({"startMin": gs, "endMin": gs + take})
-        remaining -= take
-
-    if remaining > 0:
-        return None
-
-    pieces.sort(key=lambda p: p["startMin"])
-    return pieces
-
-
-def _build_admin_alternatives(trains_data, resolved_others, starts, req, day_minutes=DAY_MINUTES):
-    dur = req["durationMins"]
-    fixed = [{"startMin": t["startMin"], "endMin": t["endMin"]} for t in trains_data]
-    for other in resolved_others:
-        s = starts[other["id"]]
-        fixed.append({"startMin": s, "endMin": s + other["durationMins"]})
-
-    gaps = _find_free_windows(fixed, min(dur, MIN_SPLIT_PART_MINS), day_minutes)
-    windows = []
-    anchor = req.get("targetAnchor", req["preferredStart"])
-    for gs, ge in gaps:
-        piece_len = min(ge - gs, dur)
-        candidate = min(max(anchor, gs), ge - piece_len)
-        windows.append({"startMin": candidate, "endMin": candidate + piece_len})
-    windows.sort(key=lambda w: abs(w["startMin"] - anchor))
-    windows = windows[:3]
-
-    req_weight = PRIORITY_WEIGHT.get(req["priority"], 10)
-    blocking = []
-    for other in resolved_others:
-        other_weight = PRIORITY_WEIGHT.get(other["priority"], 10)
-        s = starts[other["id"]]
-        if other_weight < req_weight and abs(s - anchor) <= 180:
-            blocking.append(other["id"])
-
-    return windows, blocking
-
-
-def solve_segment_corridor(segment_id: str, trains_by_line: dict, requests: list[dict]):
+def _find_min_train_slot(
+    train_intervals: list[tuple[int, int]],
+    block_intervals: list[tuple[int, int]],
+    req: dict,
+    day_minutes: int = DAY_MINUTES,
+) -> tuple[int, int]:
     """
-    Solves all requests on a physical segment across both UP and DOWN lines simultaneously.
-    Enforces identical startMin when both tracks have maintenance work.
+    Fallback when no zero-train slot exists in 24 hours.
+    Finds a start time with zero block-to-block overlap that minimizes:
+      1. Number of overlapping trains
+      2. Total overlapping train minutes
+      3. Distance from preferredStart
+    """
+    dur = req["durationMins"]
+    pref = req["preferredStart"]
+    latest_start = max(0, day_minutes - dur)
+
+    best_start = min(max(0, pref), latest_start)
+    best_score = None
+
+    for s in range(latest_start + 1):
+        e = s + dur
+        # Strictly avoid overlapping any already-scheduled maintenance block on this track
+        if any(s < be and e > bs for bs, be in block_intervals):
+            continue
+
+        train_count = 0
+        overlap_mins = 0
+        for ts, te in train_intervals:
+            ov = min(e, te) - max(s, ts)
+            if ov > 0:
+                train_count += 1
+                overlap_mins += ov
+
+        score = (train_count, overlap_mins, abs(s - pref))
+        if best_score is None or score < best_score:
+            best_score = score
+            best_start = s
+
+    final_trains = sum(
+        1 for ts, te in train_intervals if min(best_start + dur, te) - max(best_start, ts) > 0
+    )
+    return best_start, final_trains
+
+
+def solve_segment_corridor(trains_by_line: dict, requests: list[dict]):
+    """
+    1. Tries exact CP-SAT solve: zero train collision + zero block collision +
+       UP/DOWN synchronization on the same segment for maximum asset availability.
+    2. If infeasible, falls back per request (by urgency) to:
+       a) Zero-train slot on its own track closest to preferredStart.
+       b) Minimum-train slot in the 24-hour day if no zero-train slot exists.
     """
     model = cp_model.CpModel()
-    all_trains = [t for line in trains_by_line.values() for t in line]
-    density = _traffic_density_curve(all_trains)
-    max_density = max(density) if density else 0
-
     starts = {}
     intervals_by_line = defaultdict(list)
     cost_terms = []
@@ -150,32 +115,26 @@ def solve_segment_corridor(segment_id: str, trains_by_line: dict, requests: list
         starts[req["id"]] = s_var
         intervals_by_line[req["lineType"]].append(iv)
 
-        # Deviation penalty from preferred window or common junction anchor
-        anchor = req.get("targetAnchor", req["preferredStart"])
         w = PRIORITY_WEIGHT.get(req["priority"], 10)
         dev = model.NewIntVar(0, DAY_MINUTES, f"dev_{req['id']}")
-        model.AddAbsEquality(dev, s_var - anchor)
+        model.AddAbsEquality(dev, s_var - req["preferredStart"])
         cost_terms.append(dev * w)
 
-        # Traffic penalty
-        mid = model.NewIntVar(0, DAY_MINUTES - 1, f"mid_{req['id']}")
-        model.Add(mid == s_var + dur // 2)
-        traffic_at_mid = model.NewIntVar(0, max_density, f"traffic_{req['id']}")
-        model.AddElement(mid, density, traffic_at_mid)
-        cost_terms.append(traffic_at_mid * TRAFFIC_WEIGHT.get(req["priority"], 1))
-
-    # Line-specific non-overlap constraints with trains
+    # Zero train collision & zero block-to-block collision on each track
     for line_type, blk_intervals in intervals_by_line.items():
-        trn_intervals = [
-            model.NewIntervalVar(t["startMin"], max(1, t["endMin"] - t["startMin"]), t["endMin"], f"train_{t['trainNumber']}")
-            for t in trains_by_line.get(line_type, [])
-        ]
+        trn_intervals = []
+        for t in trains_by_line.get(line_type, []):
+            ts = max(0, t["startMin"])
+            te = min(DAY_MINUTES, t["endMin"])
+            if te > ts:
+                trn_intervals.append(
+                    model.NewIntervalVar(ts, te - ts, te, f"train_{t['trainNumber']}_{ts}")
+                )
         model.AddNoOverlap(trn_intervals + blk_intervals)
 
-    # STRICT SAME-SEGMENT UP & DOWN SYNCHRONIZATION
+    # Synchronize UP & DOWN on the same segment to maximize corridor availability
     up_reqs = [r for r in requests if r["lineType"] == "UP"]
     down_reqs = [r for r in requests if r["lineType"] == "DOWN"]
-
     if up_reqs and down_reqs:
         master_start = starts[up_reqs[0]["id"]]
         for r_up in up_reqs[1:]:
@@ -191,41 +150,45 @@ def solve_segment_corridor(segment_id: str, trains_by_line: dict, requests: list
     status = solver.Solve(model)
 
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return {r["id"]: solver.Value(starts[r["id"]]) for r in requests}, {}
+        has_both = bool(up_reqs and down_reqs)
+        return {
+            r["id"]: (solver.Value(starts[r["id"]]), 0, has_both)
+            for r in requests
+        }
 
-    starts_out = {}
-    conflicts_out = []
-    for r in requests:
-        line_trains = trains_by_line.get(r["lineType"], [])
-        fixed = [{"startMin": t["startMin"], "endMin": t["endMin"]} for t in line_trains]
-        slot = _find_single_slot(fixed, r)
+    # Fallback: schedule by urgency (Critical -> High -> Medium -> Low)
+    sorted_reqs = sorted(
+        requests,
+        key=lambda r: (-PRIORITY_WEIGHT.get(r["priority"], 10), r["preferredStart"]),
+    )
+    scheduled_blocks_by_line: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    placements = {}
+
+    for r in sorted_reqs:
+        line = r["lineType"]
+        dur = r["durationMins"]
+        train_ivs = [
+            (max(0, t["startMin"]), min(DAY_MINUTES, t["endMin"]))
+            for t in trains_by_line.get(line, [])
+            if min(DAY_MINUTES, t["endMin"]) > max(0, t["startMin"])
+        ]
+        block_ivs = scheduled_blocks_by_line[line]
+
+        # Tier A: Zero-train & zero-block window near preferredStart
+        slot = _find_zero_train_slot(train_ivs + block_ivs, r)
         if slot is not None:
-            starts_out[r["id"]] = slot
+            scheduled_blocks_by_line[line].append((slot, slot + dur))
+            placements[r["id"]] = (slot, 0, False)
         else:
-            conflicts_out.append(r)
+            # Tier B: No zero-train window in 24h -> pick window with fewest trains
+            min_slot, train_cnt = _find_min_train_slot(train_ivs, block_ivs, r)
+            scheduled_blocks_by_line[line].append((min_slot, min_slot + dur))
+            placements[r["id"]] = (min_slot, train_cnt, False)
 
-    return starts_out, conflicts_out
+    return placements
 
 
 def solve_milp(trains: list[dict], requests: list[dict]) -> list[dict]:
-    """
-    Solves maintenance scheduling with physical segment grouping, UP/DOWN synchronization,
-    and common junction anchoring for multi-request consolidation.
-    """
-    # 1. Pre-detect and anchor common stations
-    station_map = defaultdict(list)
-    for r in requests:
-        stns = r["segmentId"].replace("–", "-").split("-")
-        for s in stns:
-            station_map[s].append(r)
-
-    for stn, req_list in station_map.items():
-        if len(req_list) >= 2:
-            common_anchor = min(r["preferredStart"] for r in req_list)
-            for r in req_list:
-                r["targetAnchor"] = common_anchor
-
-    # 2. Group trains and requests by physical segment
     segments_data = defaultdict(lambda: {"trains": defaultdict(list), "requests": []})
 
     for t in trains:
@@ -240,51 +203,32 @@ def solve_milp(trains: list[dict], requests: list[dict]) -> list[dict]:
         if not seg_requests:
             continue
 
-        trains_by_line = data["trains"]
-        starts, conflicts = solve_segment_corridor(segment_id, trains_by_line, seg_requests)
-
-        has_both_tracks = (
-            any(r["lineType"] == "UP" for r in seg_requests) and
-            any(r["lineType"] == "DOWN" for r in seg_requests)
-        )
+        placements = solve_segment_corridor(data["trains"], seg_requests)
 
         for req in seg_requests:
-            if req["id"] in starts:
-                s = starts[req["id"]]
-                e = s + req["durationMins"]
-                reason = None
-                if s != req["preferredStart"]:
-                    sync_text = " (Synchronized UP & DOWN corridor block)" if has_both_tracks else ""
-                    reason = f"Aligned to low-traffic window for max asset availability{sync_text}"
+            s, overlapping_trains, synced = placements[req["id"]]
+            e = s + req["durationMins"]
+            status = "Scheduled" if s == req["preferredStart"] else "Shifted"
 
-                results.append({
-                    "requestId": req["id"],
-                    "segmentId": segment_id,
-                    "lineType": req["lineType"],
-                    "startMin": s,
-                    "endMin": e,
-                    "status": "Scheduled" if s == req["preferredStart"] else "Shifted",
-                    "reason": reason,
-                    "splitWindows": None,
-                    "adminResolution": None,
-                })
+            if overlapping_trains > 0:
+                reason = (
+                    f"No zero-train window available in 24h; scheduled in minimum-train window "
+                    f"({overlapping_trains} train(s) affected)"
+                )
+            elif status == "Shifted":
+                sync_note = " (UP & DOWN synchronized)" if synced else ""
+                reason = f"Aligned to zero-train window for maximum asset availability{sync_note}"
             else:
-                all_seg_trains = [t for line in trains_by_line.values() for t in line]
-                windows, blocking = _build_admin_alternatives(all_seg_trains, [], starts, req)
-                results.append({
-                    "requestId": req["id"],
-                    "segmentId": segment_id,
-                    "lineType": req["lineType"],
-                    "startMin": req["preferredStart"],
-                    "endMin": req["preferredStart"] + req["durationMins"],
-                    "status": "Conflict",
-                    "reason": "Simultaneous UP/DOWN corridor block impossible due to high opposing train traffic",
-                    "splitWindows": None,
-                    "adminResolution": {
-                        "suggestedWindows": windows,
-                        "blockingRequestIds": blocking,
-                        "recommendDeferToAnotherDay": True,
-                    },
-                })
+                reason = "UP & DOWN synchronized in preferred zero-train window" if synced else None
+
+            results.append({
+                "requestId": req["id"],
+                "segmentId": segment_id,
+                "lineType": req["lineType"],
+                "startMin": s,
+                "endMin": e,
+                "status": status,
+                "reason": reason,
+            })
 
     return results
