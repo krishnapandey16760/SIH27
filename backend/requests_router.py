@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional
 from datetime import datetime
 import uuid
@@ -14,14 +14,15 @@ router = APIRouter(prefix="/api/requests", tags=["Maintenance Requests"])
 class RequestPayload(BaseModel):
     id: Optional[str] = None
     requestId: Optional[str] = None
-    segment: str
+    segment: Optional[str] = None
+    segmentId: Optional[str] = None
     fromStation: Optional[str] = None
     toStation: Optional[str] = None
     lineType: str = "UP"
     dept: str
     durationMins: int
-    preferredStart: str
-    preferredEnd: str
+    preferredStart: str | int
+    preferredEnd: str | int
     priority: str
     requestedBy: str = "Controller"
     submittedAt: Optional[str] = None
@@ -29,21 +30,46 @@ class RequestPayload(BaseModel):
     assignedBlock: Optional[str] = None
     conflictsWith: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def sync_segment_and_times(cls, data):
+        if isinstance(data, dict):
+            if not data.get("segment") and data.get("segmentId"):
+                data["segment"] = data["segmentId"]
+            if "preferredStart" in data and data["preferredStart"] is not None:
+                data["preferredStart"] = str(data["preferredStart"])
+            if "preferredEnd" in data and data["preferredEnd"] is not None:
+                data["preferredEnd"] = str(data["preferredEnd"])
+        return data
+
 
 class RequestUpdate(BaseModel):
     segment: Optional[str] = None
+    segmentId: Optional[str] = None
     fromStation: Optional[str] = None
     toStation: Optional[str] = None
     lineType: Optional[str] = None
     dept: Optional[str] = None
     durationMins: Optional[int] = None
-    preferredStart: Optional[str] = None
-    preferredEnd: Optional[str] = None
+    preferredStart: Optional[str | int] = None
+    preferredEnd: Optional[str | int] = None
     priority: Optional[str] = None
     requestedBy: Optional[str] = None
     status: Optional[str] = None
     assignedBlock: Optional[str] = None
     conflictsWith: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_update_fields(cls, data):
+        if isinstance(data, dict):
+            if not data.get("segment") and data.get("segmentId"):
+                data["segment"] = data["segmentId"]
+            if data.get("preferredStart") is not None:
+                data["preferredStart"] = str(data["preferredStart"])
+            if data.get("preferredEnd") is not None:
+                data["preferredEnd"] = str(data["preferredEnd"])
+        return data
 
 
 def serialize_request(r: MaintenanceRequestDB) -> dict:
@@ -51,6 +77,7 @@ def serialize_request(r: MaintenanceRequestDB) -> dict:
         "id": r.id,
         "requestId": r.request_id,
         "segment": r.segment,
+        "segmentId": r.segment,
         "fromStation": r.from_station,
         "toStation": r.to_station,
         "lineType": r.line_type,
@@ -68,7 +95,7 @@ def serialize_request(r: MaintenanceRequestDB) -> dict:
 
 
 def _make_db_item(item: dict) -> MaintenanceRequestDB:
-    seg = item["segment"]
+    seg = item.get("segment") or item.get("segmentId") or ""
     parts = seg.replace("-", "–").split("–")
     from_st = item.get("fromStation") or (parts[0].strip() if len(parts) > 0 else "")
     to_st = item.get("toStation") or (parts[1].strip() if len(parts) > 1 else "")
@@ -81,8 +108,8 @@ def _make_db_item(item: dict) -> MaintenanceRequestDB:
         line_type=item.get("lineType", "UP"),
         dept=item["dept"],
         duration_mins=item["durationMins"],
-        preferred_start=item["preferredStart"],
-        preferred_end=item["preferredEnd"],
+        preferred_start=str(item["preferredStart"]),
+        preferred_end=str(item["preferredEnd"]),
         priority=item["priority"],
         requested_by=item.get("requestedBy", "Controller"),
         submitted_at=item.get("submittedAt") or datetime.now().strftime("%d %b %Y"),
@@ -100,6 +127,8 @@ def list_requests(db: Session = Depends(get_db)):
 
 @router.post("", status_code=201)
 def create_request(payload: RequestPayload, db: Session = Depends(get_db)):
+    if not payload.segment:
+        raise HTTPException(status_code=422, detail="Either 'segment' or 'segmentId' is required")
     db_item = _make_db_item(payload.model_dump())
     db.add(db_item)
     db.commit()
@@ -140,8 +169,10 @@ def update_request(req_id: str, payload: RequestUpdate, db: Session = Depends(ge
         "conflictsWith": "conflicts_with",
     }
     updates = payload.model_dump(exclude_unset=True)
+    updates.pop("segmentId", None)
     for camel_key, value in updates.items():
-        setattr(item, field_map[camel_key], value)
+        if camel_key in field_map:
+            setattr(item, field_map[camel_key], value)
 
     db.commit()
     db.refresh(item)
